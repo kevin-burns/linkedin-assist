@@ -17,7 +17,8 @@ A personal, **read-only** LinkedIn command-line tool for job hunting and researc
 | **Module path** | `github.com/kevin-burns/linkedin-assist` |
 | **Transport** | Real Chromium via `chromedp`; voyager calls run as in-page `fetch()` (no cookie/header replay) |
 | **State** | Everything under `~/.config/li-assist/` (disposable) |
-| **Scope** | Read-only: jobs search, job detail, daily sweep/diff, optional LLM enrichment |
+| **Scope** | Read-only: jobs search, job detail, daily sweep/diff, warm intros, optional LLM enrichment |
+| **Agent skill** | `skill/SKILL.md` — drive it from Claude Code / Codex (read-only, rate-limit-aware) |
 
 ### Dominant constraints (read before changing anything)
 
@@ -31,16 +32,21 @@ A personal, **read-only** LinkedIn command-line tool for job hunting and researc
 
 > **Requirements:** a local Google Chrome / Chromium is needed at runtime (for the signed-in browser session). Building from source additionally needs Go (see `go.mod`).
 
-`li-assist` is a single static binary (`CGO_ENABLED=0`, `-s -w`, ~9 MB). Pick the method that matches your situation:
+`li-assist` is a single static binary (`CGO_ENABLED=0`, `-s -w`, ~9 MB). Four ways to install it:
 
 | Method | Status | macOS quarantine step? |
 |---|---|---|
-| Build from source | ✅ **Available now** | No — a binary you compile locally is never quarantined |
-| `go install …@latest` | ⏳ Once the repo is public + tagged | No — built on your machine |
-| Pre-built release binary (GoReleaser) | ⏳ Planned (no release tagged yet) | Yes — clear it by hand (below) |
+| `go install` | ✅ Available | No — built on your machine |
+| Pre-built release binary | ✅ Available — see [Releases](https://github.com/kevin-burns/linkedin-assist/releases) | Yes — clear it by hand (below) |
+| Build from source | ✅ Available | No — a binary you compile locally is never quarantined |
 | Homebrew tap | ⏳ Planned | No — Homebrew clears it for you |
 
-Until the first release is tagged, **build from source** is the path.
+With Go installed, this is the quickest:
+
+```sh
+go install github.com/kevin-burns/linkedin-assist/cmd/li-assist@latest
+li-assist --version
+```
 
 ### Build from source (available now)
 
@@ -53,15 +59,18 @@ mv li-assist ~/.local/bin/        # or any dir on your $PATH
 
 No macOS `xattr`/`codesign` dance — a locally compiled binary never receives the `com.apple.quarantine` attribute.
 
-### Pre-built binaries (planned)
+### Pre-built binaries
 
-Releases are produced by [GoReleaser](https://goreleaser.com): one `tar.gz` per platform — **macOS and Linux, `amd64` + `arm64`** (no Windows) — plus a `checksums.txt`, named `li-assist_<version>_<os>_<arch>.tar.gz`. Once a release is tagged, download the archive for your platform from the Releases page, verify its SHA256 against `checksums.txt`, extract, and move `li-assist` onto your `$PATH`:
+Every release attaches one `tar.gz` per platform — **macOS and Linux, `amd64` + `arm64`** (no Windows) — plus a `checksums.txt`. Grab the archive for your platform from the [Releases](https://github.com/kevin-burns/linkedin-assist/releases) page, verify its SHA256 against `checksums.txt`, extract, and move `li-assist` onto your `$PATH`:
 
 ```sh
-# example shape once releases exist (URL/asset names appear on the Releases page):
-curl -L <release-asset-url>/li-assist_<version>_darwin_arm64.tar.gz | tar -xz
+# pick the asset matching your OS/arch (example: Apple Silicon)
+curl -LO https://github.com/kevin-burns/linkedin-assist/releases/download/v0.1.0/li-assist_0.1.0_darwin_arm64.tar.gz
+tar -xzf li-assist_0.1.0_darwin_arm64.tar.gz
 mv li-assist ~/.local/bin/ && chmod +x ~/.local/bin/li-assist
 ```
+
+The binaries are built with [GoReleaser](https://goreleaser.com) (`-trimpath`, stripped).
 
 #### macOS: clear the download quarantine
 
@@ -96,6 +105,7 @@ li-assist doctor [--check-login-flow]# health checks: credentials, staleness, on
 li-assist config location            # print home location default
 li-assist config location "Aachen, Germany"  # set home location default
 li-assist config location --clear    # clear home location default
+li-assist config connections <path>  # point at your Connections.csv export (enables --intros)
 li-assist jobs search <keyword...>   # search jobs (multi-word; LinkedIn boolean operators supported)
 li-assist jobs get <urn>             # fetch one job's full detail
 li-assist jobs sweep <keyword...>    # search, diff against the local cache, report only what's new
@@ -115,6 +125,7 @@ li-assist jobs search '"platform engineer" OR devops NOT recruiter'  # LinkedIn 
 |---|---|---|---|
 | `config location` | `[value]` | — | Set home location (e.g. `"Aachen, Germany"`); omit value to print current |
 | | `--clear` | — | Clear the home location |
+| `config connections` | `[path]` | — | Set the `Connections.csv` path for `--intros`; omit to print; `--clear` to clear |
 | `jobs search <keyword...>` | `--location <str>` | home_location | Location filter; overrides the home location set via `config location` |
 | | `--anywhere` | false | Search worldwide (no location filter); mutually exclusive with `--location` |
 | | `--limit <n>` | `25` | Max results |
@@ -123,10 +134,13 @@ li-assist jobs search '"platform engineer" OR devops NOT recruiter'  # LinkedIn 
 | | `--format json\|okf` | `json` | Output format (`okf` is stubbed — returns an error until the Ogham bundle format is defined) |
 | `jobs get <urn>` | `--refresh` | false | Bypass the cache and re-fetch from voyager |
 | | `--enrich` | false | Run LLM enrichment on the job (see [Enrichment](#enrichment)) |
+| | `--intros` | false | List 1st-degree connections at the job's company (see [Warm intros](#warm-intros-offline)) |
+| | `--connections <path>` | — | Path to your `Connections.csv` export (overrides env + config) |
 | | `--format json\|okf` | `json` | Output format |
 | `jobs sweep <keyword...>` | `--location`, `--anywhere`, `--limit`, `--exclude-company`, `--exclude-title` | — | Same as `jobs search` (`--limit` default `25`) |
 | | `--all` | false | Print all results, not just new-since-last-sweep |
 | | `--enrich` | false | Enrich NEW jobs (bounded — see [Enrichment](#enrichment)) |
+| | `--intros` `--connections <path>` | — | Annotate each new job with known connections (see [Warm intros](#warm-intros-offline)) |
 | | `--format json` | `json` | `sweep` supports **`json` only** (`okf` returns an error; only `search`/`get` accept `okf`) |
 | `auth status` | `--json` | false | Emit status as JSON (for scripting) |
 | `doctor` | `--check-login-flow` | false | Open a visible Chrome window to verify the LinkedIn login page renders (catches Chrome/network breakage); reuses the open session |
@@ -158,6 +172,22 @@ sweep: 30 new / 12 seen / 2 excluded (cache: 44 jobs) | enriched 20/30 new (cap 
 ```
 
 The cache is a self-evicting JSONL file (`jq`-able, disposable). A repost gets a new job id, so it correctly shows up as new.
+
+### Warm intros (offline)
+
+`--intros` (on `jobs get` and `jobs sweep`) cross-references your own LinkedIn connections against each job's employer and lists who you already know there. It runs **entirely offline** from your **Connections.csv** export: zero extra network calls, and it never messages anyone.
+
+Get the export once on LinkedIn under **Settings → Data Privacy → Get a copy of your data → Connections**. Then either drop `Connections.csv` at `~/.config/li-assist/connections.csv`, or remember its path:
+
+```sh
+li-assist config connections ~/Downloads/Connections.csv          # remember it
+li-assist jobs sweep "platform engineer" --intros                 # new jobs, annotated with people you know there
+li-assist jobs get <urn> --intros --connections ./Connections.csv # or pass a one-off path
+```
+
+Each match shows the connection's name, profile URL, current title, and the date you connected. The file holds real people's names, so `Connections.csv` is gitignored and the email column is dropped on import. Path precedence: `--connections` > `LI_ASSIST_CONNECTIONS_CSV` > `config connections` > `~/.config/li-assist/connections.csv`.
+
+A connection counts when their current employer matches the job's company (after light normalization). Fuzzy matching and ranking are deferred for now.
 
 ---
 
@@ -230,10 +260,11 @@ All state lives under `~/.config/li-assist/`:
 |------|---------|
 | `chrome/` | Persistent Chrome profile (holds the live login) |
 | `credentials.json` | Login metadata (captured-at, li_at expiry) — `0600` |
-| `config.json` | Persistent settings (`home_location`, …) — `0600`; managed via `li-assist config` |
+| `config.json` | Persistent settings (`home_location`, `connections_path`, …) — `0600`; managed via `li-assist config` |
 | `usage.json` | Daily rate-limit counter |
 | `cache/jobs.jsonl` | Local job cache (capped, self-evicting) |
 | `excluded-companies.txt` | Persistent company exclusion list (one per line) |
+| `connections.csv` | Your LinkedIn Connections.csv export for `--intros` (optional; gitignored) |
 
 ### Environment variables
 
@@ -247,6 +278,7 @@ All state lives under `~/.config/li-assist/`:
 | `LI_ASSIST_ENRICH_PROVIDER` | (auto) | Force `ollama` \| `openai` \| `gemini` \| `anthropic` \| `none` |
 | `LI_ASSIST_ENRICH_MODEL` | per-provider | Override the chat model |
 | `LI_ASSIST_ENRICH_MAX_PER_RUN` | `25` | Max NEW jobs enriched per `sweep --enrich` (≤0 clamps to default) |
+| `LI_ASSIST_CONNECTIONS_CSV` | — | Path to your Connections.csv export for `--intros` |
 | `LI_ASSIST_OLLAMA_HOST` | `http://localhost:11434` | Ollama base URL |
 | `LI_ASSIST_OLLAMA_AUTOSTART` | `true` | Auto-start `ollama serve` when provider is `ollama` and it's down |
 | `LI_ASSIST_OLLAMA_START_TIMEOUT` | `15s` | How long to wait for Ollama to become ready |
@@ -298,7 +330,8 @@ There are two different kinds of "no" here, and the distinction matters:
 | Default home location, `--location`, `--anywhere` | ✅ Working |
 | Company / title exclusions (`--exclude-company`, `--exclude-title`) | ✅ Working |
 | LLM enrichment (`--enrich`) | ✅ Working |
-| `auth login/status`, `doctor`, `config location` | ✅ Working |
+| Warm intros from your Connections.csv (`--intros`) | ✅ Working — offline, exact-company match (fuzzy/ranking deferred) |
+| `auth login/status`, `doctor`, `config location`, `config connections` | ✅ Working |
 | Company `get` / `employees` | 🚧 Deferred — still clean voyager; capture corpora exist, deprioritized |
 | Company **search**, People **search**, Person profile | ⛔ Deferred — migrated to Server-Driven UI (`flagship-web/rsc-action`, `com.linkedin.sdui.*`); no clean voyager endpoint |
 | Read a **post / article body** | ⛔ Deferred — bodies are server-rendered into the page HTML; the clean `voyagerFeedDashUpdates` XHR does not fire reliably. Only the social layer (reactions/comments) is clean voyager. Would need DOM extraction. |
