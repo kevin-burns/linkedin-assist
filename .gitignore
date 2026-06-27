@@ -1,0 +1,43 @@
+# binary (root-level build output only)
+/li-assist
+/spike-capture
+/enrich-eval
+# stale pre-rename build outputs (binary was om-li; capture tool was spike-jobs)
+/om-li
+/spike-jobs
+dist/
+
+# local research snapshots (source-snapshot artifacts; provenance only, not published)
+snapshots/
+
+# editors / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+**/.DS_Store
+
+# M0 spike: raw captures contain LIVE session cookies. NEVER commit.
+docs/spike/raw-*.txt
+docs/spike/*.spike
+docs/spike/ja3-replay-output.txt
+*.curl
+
+# M0 spike URL dumps: query strings can carry session tokens -- keep local.
+docs/spike/jobs-voyager-urls.txt
+docs/spike/all-network-urls.txt
+
+# local credential seed produced by the spike parser
+credentials.json.spike
+
+# spike-capture: per-target URL manifests and captured voyager bodies.
+# Query strings carry session tokens; bodies may contain PII. Never commit.
+docs/spike/capture/
+internal/voyager/testdata/voyager/_capture/
+
+# LinkedIn Connections.csv export: contains real people's names (PII).
+# The user exports this locally; it must never be committed.
+# Matches the file regardless of directory so accidental placement in the repo
+# is caught at any nesting level.
+**/Connections.csv
+**/connections.csv

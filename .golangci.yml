@@ -1,0 +1,42 @@
+version: "2"
+
+linters:
+  enable:
+    - gosec
+    - errcheck
+    - govet
+    - staticcheck
+
+  settings:
+    gosec:
+      excludes:
+        # G304: file paths from our own config constants (credentials.json,
+        # usage.json, excluded-companies.txt). Paths are not derived from user
+        # input -- they are constructed from os.UserHomeDir() + hardcoded
+        # sub-paths inside internal/auth and internal/ratelimit. No traversal
+        # risk in this codebase.
+        - G304
+        # G404: math/rand used for cadence jitter in ratelimit.Limiter. The
+        # jitter is purely for pacing LinkedIn API calls (human-like timing),
+        # not for any security-sensitive purpose. Using crypto/rand here would
+        # be wasteful and misleading.
+        - G404
+
+  exclusions:
+    rules:
+      # Test files: ignore errcheck (os.Setenv/Unsetenv return values are
+      # irrelevant in test setup) and gosec (test fixtures are not production
+      # security boundaries).
+      - linters: [errcheck, gosec]
+        path: _test\.go$
+      # fmt.Fprintln/Fprintf to os.Stdout/os.Stderr is the intended output
+      # sink in CLI commands -- not an error path. Same pattern as ogham-cli.
+      - linters: [errcheck]
+        text: "fmt.Fprint"
+    paths:
+      # cmd/spike-capture is a throwaway spike harness, explicitly marked
+      # "Delete this command after the spike is complete." It has intentional
+      # 0644 permissions (non-sensitive captured URL lists and gitignored
+      # voyager response bodies) and uses gosec-annotated file writes.
+      - cmd/spike-capture
+      - vendor

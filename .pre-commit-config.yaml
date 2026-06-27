@@ -1,0 +1,62 @@
+repos:
+  - repo: https://github.com/dnephin/pre-commit-golang
+    rev: v0.5.1
+    hooks:
+      - id: go-fmt
+      - id: go-vet
+      - id: go-build
+
+  - repo: https://github.com/golangci/golangci-lint
+    # v2.12.2 verified against Go 1.26 in this repo; older v2.x may not parse
+    # 1.26 syntax. Run `pre-commit autoupdate` to bump.
+    rev: v2.12.2
+    hooks:
+      - id: golangci-lint
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: detect-private-key
+
+  # Broad-spectrum secret scanner. li-assist holds a LIVE LinkedIn session
+  # (cookies captured in ~/.config/li-assist/chrome). The #1 risk is
+  # accidentally committing a captured cookie / cURL dump. gitleaks
+  # catches what detect-private-key misses: connection strings, cloud API
+  # keys, and ~160 other token patterns.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
+  # gosec -- Go SAST. Catches hardcoded credentials, weak crypto,
+  # unvalidated SQL, file-permission issues, etc.
+  # Excludes (mirror .golangci.yml gosec.excludes + security-scan Makefile target):
+  #   G104 -- errcheck (golangci-lint) already covers unhandled errors with better
+  #            nolint integration; duplicate reports add noise.
+  #   G304 -- file paths are from our own config constants (credentials.json,
+  #            usage.json, excluded-companies.txt), not user input.
+  # Run via `go run` so the version tracks the Makefile's `security-scan` target.
+  - repo: local
+    hooks:
+      - id: gosec
+        name: gosec (Go SAST)
+        entry: go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -exclude=G104,G304 ./...
+        language: system
+        types: [go]
+        pass_filenames: false
+
+  # govulncheck -- Go's official known-CVE scanner. Checks both direct
+  # deps and stdlib. Runs on every commit so a dependency advisory
+  # surfaces before it lands on main.
+  - repo: local
+    hooks:
+      - id: govulncheck
+        name: govulncheck (known CVEs)
+        entry: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        language: system
+        types: [go]
+        pass_filenames: false

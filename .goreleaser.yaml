@@ -1,0 +1,67 @@
+version: 2
+project_name: li-assist
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: li-assist
+    main: ./cmd/li-assist
+    binary: li-assist
+    env:
+      - CGO_ENABLED=0
+    # -trimpath produces reproducible builds: same source -> same binary
+    # regardless of build host path, which matters for supply-chain trust.
+    flags:
+      - -trimpath
+    ldflags:
+      # -s -w: strip symbol table + DWARF debug info (~30% size reduction).
+      # version/commit/date are baked in so `li-assist --version` prints them.
+      - -s -w -X main.version={{.Version}} -X main.commit={{.ShortCommit}} -X main.date={{.Date}}
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+
+archives:
+  - id: li-assist
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+release:
+  draft: true
+
+brews:
+  - name: li-assist
+    skip_upload: auto
+    repository:
+      owner: kevin-burns
+      name: homebrew-tap
+    homepage: "https://github.com/kevin-burns/linkedin-assist"
+    description: "Personal LinkedIn CLI"
+
+# Auto-generated changelog grouped by conventional-commit prefixes.
+changelog:
+  sort: asc
+  use: github
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Documentation
+      regexp: '^.*?docs(\(.+\))??!?:.+$'
+      order: 2
+    - title: Other
+      order: 999
+  filters:
+    exclude:
+      - '^test:'
+      - '^chore:'
+      - 'merge conflict'

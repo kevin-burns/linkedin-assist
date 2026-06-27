@@ -1,0 +1,10 @@
+Notes:
+"LinkedIn will only provide your email address if you have explicitly connected with the member."
+
+First Name,Last Name,URL,Email Address,Company,Position,Connected On
+Ané,Müller,https://www.linkedin.com/in/ane-muller,,"Acme, Inc.",Software Engineer,01 Jan 2026
+Bob,Smith,https://www.linkedin.com/in/bob-smith,,Widgets GmbH,Product Manager,15 Mar 2025
+Carol,Lee,https://www.linkedin.com/in/carol-lee,,Foo Inc,Senior Developer,20 Jun 2024
+Dave,Jones,https://www.linkedin.com/in/dave-jones,,,Consultant,
+Eve,Brown,https://www.linkedin.com/in/eve-brown,,Bar Corp,Data Analyst,
+short-row-only
