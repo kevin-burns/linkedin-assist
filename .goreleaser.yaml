@@ -33,16 +33,12 @@ checksum:
   algorithm: sha256
 
 release:
+  # Tag pushes build binaries into a DRAFT release for review before publishing.
   draft: true
 
-brews:
-  - name: li-assist
-    skip_upload: auto
-    repository:
-      owner: kevin-burns
-      name: homebrew-tap
-    homepage: "https://github.com/kevin-burns/linkedin-assist"
-    description: "Personal LinkedIn CLI"
+# Homebrew is deferred until the tap repo exists. To enable: create
+# github.com/kevin-burns/homebrew-tap, then add a `homebrew_casks:` stanza
+# (the old `brews:` key is deprecated in GoReleaser v2).
 
 # Auto-generated changelog grouped by conventional-commit prefixes.
 changelog:

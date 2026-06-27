@@ -1,0 +1,32 @@
+name: release
+
+# Build cross-platform binaries and a checksummed, draft GitHub release
+# whenever a version tag is pushed. The release is created as a DRAFT
+# (see .goreleaser.yaml `release.draft`) so the notes can be reviewed and
+# published by hand.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write # required for GoReleaser to create the release + upload assets
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history so the changelog can diff against the prior tag
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
