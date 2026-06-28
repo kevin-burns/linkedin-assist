@@ -399,3 +399,13 @@ mv ~/.config/om-li ~/.config/li-assist
 ## Prior art
 
 The browser-resident transport and several voyager facts (the `{data, included[]}` envelope, CSRF derivation, the profile endpoint) were informed by [`eracle/linkedin-cli`](https://github.com/eracle/linkedin-cli) (MIT). The jobs-search and job-detail endpoint shapes were captured independently.
+
+---
+
+## Contributing
+
+Contributions are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). The short version: the tool is **read-only by charter** and account safety comes first, so please read the guardrails before adding features. Security reports: see [SECURITY.md](SECURITY.md).
+
+## License
+
+[MIT](LICENSE) © 2026 Kevin Burns.
