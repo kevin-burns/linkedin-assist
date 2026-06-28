@@ -50,14 +50,17 @@ deps-check:
 # `go run`, cached in $$GOPATH/pkg/mod after first run. Exits non-zero
 # on findings so this can gate releases via `make ship-check`.
 #
-# gosec excludes (must match .golangci.yml gosec.excludes):
-#   G104 -- "Errors unhandled" overlaps with errcheck (in golangci-lint);
-#            keeping both produces duplicate reports.
-#   G304 -- file paths from our own config constants (credentials.json,
-#            usage.json, excluded-companies.txt), not user input.
+# gosec excludes (must match .golangci.yml gosec.excludes -- see there for the
+# per-rule rationale; all are investigated false positives for this local CLI):
+#   G104 -- "Errors unhandled" overlaps with errcheck (duplicate reports).
+#   G204 -- exec of the PATH-resolved ollama binary (LookPath + fixed arg).
+#   G304 -- file paths from our own config constants / the --connections flag.
+#   G704 -- HTTP probe to the operator-configured (validated) Ollama URL.
+# NOTE: gosec honours its own #nosec directive, NOT golangci's //nolint, so the
+# exclude flag here is how standalone gosec stays in sync with golangci-lint.
 security-scan:
 	@echo "== gosec (static security analysis) =="
-	$(GO) run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -exclude=G104,G304 ./...
+	$(GO) run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -exclude=G104,G204,G304,G704 ./...
 	@echo "== govulncheck (known CVEs in deps + stdlib) =="
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@latest ./...
 

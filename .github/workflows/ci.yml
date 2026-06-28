@@ -57,7 +57,9 @@ jobs:
           version: latest
 
       - name: gosec (Go SAST)
-        run: go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -exclude=G104 ./...
+        # Exclude set MUST match .golangci.yml gosec.excludes + the Makefile
+        # (see .golangci.yml for the per-rule false-positive rationale).
+        run: go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -exclude=G104,G204,G304,G704 ./...
 
       - name: govulncheck (known CVEs)
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...

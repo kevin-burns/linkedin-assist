@@ -15,8 +15,10 @@
 package enrich
 
 import (
+	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -86,8 +88,25 @@ func EnsureOllama(host string, autostart bool, timeout time.Duration, start func
 // true if the response status is 200 OK. It is the single probe helper used by
 // both EnsureOllama (configurable timeout) and autoDetect (1s fast probe).
 func ollamaReachable(host string, timeout time.Duration) bool {
-	client := &http.Client{Timeout: timeout}
-	resp, err := client.Get(host + "/api/tags") //nolint:noctx,gosec // G704: host is operator-configured (LI_ASSIST_OLLAMA_HOST), not attacker input
+	// Validate the configured host into a concrete http(s) URL before issuing a
+	// request. Rejecting non-http(s) schemes and empty hosts keeps a malformed
+	// LI_ASSIST_OLLAMA_HOST (or anything exotic like file://) from ever reaching
+	// the HTTP client, and constructing the target from parsed components — not
+	// string concatenation — means the probe only ever hits <scheme>://<host>/api/tags.
+	u, err := url.Parse(strings.TrimSpace(host))
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return false
+	}
+	u.Path = "/api/tags"
+	u.RawQuery = ""
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return false
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return false
 	}
@@ -112,7 +131,9 @@ func spawnOllama() error {
 		logFile = nil
 	}
 
-	cmd := exec.Command(bin, "serve") //nolint:gosec // G204: bin is resolved via exec.LookPath("ollama") with a fixed "serve" arg; not user input
+	// bin is the PATH-resolved ollama binary (exec.LookPath above) with a fixed
+	// "serve" arg -- safe by construction. See .golangci.yml for the G204 note.
+	cmd := exec.Command(bin, "serve")
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if logFile != nil {
 		cmd.Stdout = logFile
