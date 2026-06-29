@@ -2,12 +2,14 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
 	"runtime/debug"
 	"syscall"
 
+	"github.com/kevin-burns/linkedin-assist/internal/auth"
 	"github.com/spf13/cobra"
 )
 
@@ -54,7 +56,14 @@ func main() {
 	defer stop()
 
 	if err := newRootCmd().ExecuteContext(ctx); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		// A missing browser is the one error a brand-new user is most likely to
+		// hit, so surface the bare actionable message (with the install URL)
+		// instead of the wrapped "open browser session: ..." chain.
+		if errors.Is(err, auth.ErrChromeNotFound) {
+			fmt.Fprintln(os.Stderr, auth.ErrChromeNotFound)
+		} else {
+			fmt.Fprintln(os.Stderr, err)
+		}
 		os.Exit(1)
 	}
 }
