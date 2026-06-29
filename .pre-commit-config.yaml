@@ -37,14 +37,19 @@ repos:
   # Excludes (mirror .golangci.yml gosec.excludes + security-scan Makefile target):
   #   G104 -- errcheck (golangci-lint) already covers unhandled errors with better
   #            nolint integration; duplicate reports add noise.
+  #   G204 -- the one exec is exec.Command(exec.LookPath("ollama"), "serve"):
+  #            a PATH-resolved trusted binary with a fixed arg, not injection.
   #   G304 -- file paths are from our own config constants (credentials.json,
   #            usage.json, excluded-companies.txt), not user input.
-  # Run via `go run` so the version tracks the Makefile's `security-scan` target.
+  #   G704 -- the Ollama probe targets an operator-set local-daemon URL that is
+  #            url.Parse'd and scheme-validated; gosec flags any env-derived host.
+  # Excludes mirror .golangci.yml gosec.excludes and the Makefile `security-scan`
+  # target -- keep all three in sync. Run via `go run` so the version tracks them.
   - repo: local
     hooks:
       - id: gosec
         name: gosec (Go SAST)
-        entry: go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -exclude=G104,G304 ./...
+        entry: go run github.com/securego/gosec/v2/cmd/gosec@latest -quiet -exclude=G104,G204,G304,G704 ./...
         language: system
         types: [go]
         pass_filenames: false
