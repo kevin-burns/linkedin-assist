@@ -44,6 +44,11 @@ func TestFormatStatus_fresh(t *testing.T) {
 	if strings.Contains(result, "STALE") {
 		t.Errorf("did not expect 'STALE' for 5-day-old session, got:\n%s", result)
 	}
+	// auth status is metadata-only; it must point the user at doctor for the
+	// real (browser-backed) session check.
+	if !strings.Contains(result, "li-assist doctor") {
+		t.Errorf("expected a 'li-assist doctor' hint in the status output, got:\n%s", result)
+	}
 }
 
 // TestFormatStatus_stale verifies output for a stale session.

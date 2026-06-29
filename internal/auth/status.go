@@ -71,6 +71,10 @@ func FormatStatus(in StatusInput) string {
 	}
 
 	fmt.Fprintf(&b, "profile dir: %s\n", in.ProfileDir)
+	// auth status is browser-free: it reports saved metadata, not the live
+	// cookie store. A session whose cookies did not persist can still look
+	// healthy here, so point the user at doctor for the real check.
+	fmt.Fprintln(&b, "note: this reads saved login metadata only -- run 'li-assist doctor' to verify the live session")
 
 	return b.String()
 }
