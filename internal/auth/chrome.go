@@ -12,10 +12,9 @@ import (
 // be located on the system. Install Google Chrome from
 // https://www.google.com/chrome/ (or a Chromium package) and re-run.
 var ErrChromeNotFound = errors.New(
-	"Chrome or Chromium is required but was not found: " +
-		"install Google Chrome from https://www.google.com/chrome/ " +
-		"(or a Chromium package such as 'chromium' / 'chromium-browser'), " +
-		"then re-run",
+	"could not find Chrome or Chromium: install Google Chrome from " +
+		"https://www.google.com/chrome/ (or a Chromium package such as " +
+		"'chromium' / 'chromium-browser'), then re-run",
 )
 
 // chromeCandidates returns the ordered list of paths / names to probe for
