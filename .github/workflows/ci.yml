@@ -54,7 +54,9 @@ jobs:
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v8
         with:
-          version: latest
+          # Pinned to match the prek hook (.pre-commit-config.yaml). Bump both
+          # together; `latest` here would silently drift from local.
+          version: v2.12.2
 
       - name: gosec (Go SAST)
         # Exclude set MUST match .golangci.yml gosec.excludes + the Makefile

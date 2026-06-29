@@ -7,11 +7,16 @@ repos:
       - id: go-build
 
   - repo: https://github.com/golangci/golangci-lint
-    # v2.12.2 verified against Go 1.26 in this repo; older v2.x may not parse
-    # 1.26 syntax. Run `pre-commit autoupdate` to bump.
+    # Keep this pinned to the SAME version as CI's golangci-lint-action
+    # (.github/workflows/ci.yml). v2.12.2 verified against Go 1.26; bump both
+    # together to avoid drift. Run `pre-commit autoupdate` + edit CI in one go.
     rev: v2.12.2
     hooks:
-      - id: golangci-lint
+      # golangci-lint-full = `golangci-lint run` over the WHOLE module, matching
+      # CI. The default `golangci-lint` id runs `--new-from-rev HEAD`, which only
+      # flags issues new since HEAD -- that let a staticcheck ST1005 finding on an
+      # already-committed file slip past local and fail CI (v0.1.3).
+      - id: golangci-lint-full
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
