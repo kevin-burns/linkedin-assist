@@ -17,7 +17,7 @@ import (
 // checkResult holds the outcome of a single doctor check.
 type checkResult struct {
 	name    string
-	verdict string // "PASS", "WARN", "FAIL"
+	verdict string // "PASS", "WARN", "FAIL", "SKIP"
 	detail  string
 }
 
@@ -39,9 +39,12 @@ func newDoctorCmd() *cobra.Command {
 		Long: `Runs a sequence of checks and prints a PASS/WARN/FAIL report.
 
 Checks performed:
-  1. Credentials present + staleness (STALE is WARN, missing is FAIL).
-  2. Login health: opens headless Chrome and verifies li_at cookie is present.
-  3. Voyager probe: performs a single jobs search to confirm API reachability.
+  1. Chrome/Chromium binary present on the system.
+  2. Credentials present + staleness (STALE is WARN, missing is FAIL).
+  3. Login health: opens headless Chrome and verifies li_at cookie is present.
+     If credentials exist but li_at is absent, a specific diagnosis is printed
+     (session cookie was not persisted -- see 'li-assist auth login' tip below).
+  4. Voyager probe: performs a single jobs search to confirm API reachability.
 
 Exits non-zero if any check FAILs.
 
@@ -55,14 +58,35 @@ Use --check-login-flow to also verify the LinkedIn login page renders
 			anyFail := false
 
 			// ------------------------------------------------------------------
-			// Check 1: credentials present + staleness
+			// Check 1: Chrome/Chromium binary present
+			// ------------------------------------------------------------------
+			chromePath, chromeFound := auth.FindChrome()
+			if !chromeFound {
+				results = append(results, checkResult{
+					name:    "chrome binary",
+					verdict: "FAIL",
+					detail:  "Chrome or Chromium not found -- install Google Chrome from https://www.google.com/chrome/ (or a Chromium package) and re-run",
+				})
+				anyFail = true
+			} else {
+				results = append(results, checkResult{
+					name:    "chrome binary",
+					verdict: "PASS",
+					detail:  chromePath,
+				})
+			}
+
+			// ------------------------------------------------------------------
+			// Check 2: credentials present + staleness
 			// ------------------------------------------------------------------
 			credPath := auth.DefaultPath()
 			reauthDays := auth.ReauthDays()
 			now := time.Now().UTC()
 
-			creds, err := auth.Load(credPath)
-			if err != nil {
+			var creds auth.Credentials
+			var credsErr error
+			creds, credsErr = auth.Load(credPath)
+			if credsErr != nil {
 				results = append(results, checkResult{
 					name:    "credentials",
 					verdict: "FAIL",
@@ -89,24 +113,57 @@ Use --check-login-flow to also verify the LinkedIn login page renders
 			}
 
 			// ------------------------------------------------------------------
-			// Check 2: login health (headless Chrome, li_at present)
+			// Check 3: login health (headless Chrome, li_at present)
 			// ------------------------------------------------------------------
-			sess, openErr := auth.Open(ctx, true)
-			if openErr != nil {
+			var sess *auth.Session
+			var openErr error
+			if !chromeFound {
+				// Chrome is absent — skip the session checks so we don't emit a
+				// confusing secondary error for the same root cause.
 				results = append(results, checkResult{
 					name:    "login health",
-					verdict: "FAIL",
-					detail:  fmt.Sprintf("could not open headless Chrome: %v", openErr),
+					verdict: "SKIP",
+					detail:  "skipped because Chrome binary was not found (see check 1)",
 				})
-				anyFail = true
 			} else {
-				defer sess.Close()
-				loginHealthPassed := false
-				if !sess.LoggedIn() {
+				sess, openErr = auth.Open(ctx, true)
+				if openErr != nil {
 					results = append(results, checkResult{
 						name:    "login health",
 						verdict: "FAIL",
-						detail:  "li_at cookie absent -- run li-assist auth login",
+						detail:  fmt.Sprintf("could not open headless Chrome: %v", openErr),
+					})
+					anyFail = true
+				} else {
+					defer sess.Close()
+				}
+			}
+
+			loginHealthPassed := false
+			if sess != nil {
+				if !sess.LoggedIn() {
+					// Distinguish between "never logged in" and "cookie not persisted".
+					// If a fresh credentials.json exists (within the staleness window)
+					// but li_at is absent in the headless session, the login succeeded
+					// but the session cookie was not written to disk.
+					detail := "li_at cookie absent -- run 'li-assist auth login' first"
+					if credsErr == nil {
+						age, stale := auth.SessionStaleness(creds.CapturedAt, now, reauthDays)
+						ageDays := int(age.Hours() / 24)
+						if !stale {
+							detail = fmt.Sprintf(
+								"login metadata is recent (%d day(s) old) but li_at cookie was not found "+
+									"in the Chrome profile -- the session cookie did not persist to disk; "+
+									"re-run 'li-assist auth login', complete any 2FA prompt, and tick "+
+									"\"Keep me logged in\" in the LinkedIn login form",
+								ageDays,
+							)
+						}
+					}
+					results = append(results, checkResult{
+						name:    "login health",
+						verdict: "FAIL",
+						detail:  detail,
 					})
 					anyFail = true
 				} else {
@@ -117,47 +174,51 @@ Use --check-login-flow to also verify the LinkedIn login page renders
 						detail:  "li_at present in browser session",
 					})
 				}
+			}
 
-				// --------------------------------------------------------------
-				// Check 3: voyager probe (only if login health passed)
-				// --------------------------------------------------------------
-				if loginHealthPassed {
-					limiter := ratelimit.NewLimiter(ratelimit.OptionsFromEnv())
-					transport := voyager.NewTransport(sess, limiter)
-					jobsClient := voyager.NewJobsClient(transport)
+			// ------------------------------------------------------------------
+			// Check 4: voyager probe (only if login health passed)
+			// ------------------------------------------------------------------
+			if loginHealthPassed {
+				limiter := ratelimit.NewLimiter(ratelimit.OptionsFromEnv())
+				transport := voyager.NewTransport(sess, limiter)
+				jobsClient := voyager.NewJobsClient(transport)
 
-					jobs, probeErr := jobsClient.Search(ctx, voyager.JobSearchParams{
-						Keywords: "engineer",
-						Count:    1,
-					})
-					if probeErr != nil {
-						verdict := "FAIL"
-						detail := fmt.Sprintf("probe error: %v", probeErr)
-						if errors.Is(probeErr, domain.ErrAuth) {
-							detail = "401 authentication failure -- run li-assist auth login"
-						} else if errors.Is(probeErr, domain.ErrSchema) {
-							detail = "response schema mismatch -- LinkedIn API may have changed (schema drift)"
-						}
-						results = append(results, checkResult{
-							name:    "voyager probe",
-							verdict: verdict,
-							detail:  detail,
-						})
-						anyFail = true
-					} else {
-						results = append(results, checkResult{
-							name:    "voyager probe",
-							verdict: "PASS",
-							detail:  fmt.Sprintf("search returned %d result(s)", len(jobs)),
-						})
+				jobs, probeErr := jobsClient.Search(ctx, voyager.JobSearchParams{
+					Keywords: "engineer",
+					Count:    1,
+				})
+				if probeErr != nil {
+					verdict := "FAIL"
+					detail := fmt.Sprintf("probe error: %v", probeErr)
+					if errors.Is(probeErr, domain.ErrAuth) {
+						detail = "401 authentication failure -- run li-assist auth login"
+					} else if errors.Is(probeErr, domain.ErrSchema) {
+						detail = "response schema mismatch -- LinkedIn API may have changed (schema drift)"
 					}
+					results = append(results, checkResult{
+						name:    "voyager probe",
+						verdict: verdict,
+						detail:  detail,
+					})
+					anyFail = true
 				} else {
 					results = append(results, checkResult{
 						name:    "voyager probe",
-						verdict: "SKIP",
-						detail:  "skipped because login health check failed",
+						verdict: "PASS",
+						detail:  fmt.Sprintf("search returned %d result(s)", len(jobs)),
 					})
 				}
+			} else {
+				skipDetail := "skipped because login health check failed"
+				if !chromeFound {
+					skipDetail = "skipped because the Chrome binary was not found (see check 1)"
+				}
+				results = append(results, checkResult{
+					name:    "voyager probe",
+					verdict: "SKIP",
+					detail:  skipDetail,
+				})
 			}
 
 			// ------------------------------------------------------------------
@@ -166,14 +227,14 @@ Use --check-login-flow to also verify the LinkedIn login page renders
 			if checkLoginFlow {
 				// Verify Chrome/chromedp can still render a LinkedIn page (catches
 				// Chrome auto-update breakage before a re-auth is needed). Reuse the
-				// session already opened for check 2 -- opening a second Chrome on the
+				// session already opened for check 3 -- opening a second Chrome on the
 				// same persistent profile dir would deadlock on Chromium's singleton
 				// profile lock.
-				if openErr != nil {
+				if !chromeFound || openErr != nil {
 					results = append(results, checkResult{
 						name:    "chrome render",
 						verdict: "FAIL",
-						detail:  "Chrome could not be opened (see login health above)",
+						detail:  "Chrome could not be opened (see checks above)",
 					})
 					anyFail = true
 				} else if navErr := sess.EnsureLinkedInOrigin(); navErr != nil {

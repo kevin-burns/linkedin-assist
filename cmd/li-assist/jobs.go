@@ -124,7 +124,9 @@ Results are printed to stdout as JSON by default.`,
 			if !sess.LoggedIn() {
 				// Return (not os.Exit) so the deferred sess.Close() runs and the
 				// headless Chrome process is not leaked.
-				return fmt.Errorf("not logged in -- run 'li-assist auth login' first")
+				return fmt.Errorf("not logged in -- run 'li-assist auth login' to open a browser " +
+					"window and sign in; completing 2FA is normal and expected; tick " +
+					"\"Keep me logged in\" so the session persists across commands")
 			}
 
 			limiter := ratelimit.NewLimiter(ratelimit.OptionsFromEnv())
@@ -308,7 +310,9 @@ as warm-intro candidates. Requires a Connections.csv export from LinkedIn
 			if !sess.LoggedIn() {
 				// Return (not os.Exit) so the deferred sess.Close() runs and the
 				// headless Chrome process is not leaked.
-				return fmt.Errorf("not logged in -- run 'li-assist auth login' first")
+				return fmt.Errorf("not logged in -- run 'li-assist auth login' to open a browser " +
+					"window and sign in; completing 2FA is normal and expected; tick " +
+					"\"Keep me logged in\" so the session persists across commands")
 			}
 
 			limiter := ratelimit.NewLimiter(ratelimit.OptionsFromEnv())
@@ -514,7 +518,9 @@ Requires an active login session (run 'li-assist auth login' first).`,
 			defer sess.Close()
 
 			if !sess.LoggedIn() {
-				return fmt.Errorf("not logged in -- run 'li-assist auth login' first")
+				return fmt.Errorf("not logged in -- run 'li-assist auth login' to open a browser " +
+					"window and sign in; completing 2FA is normal and expected; tick " +
+					"\"Keep me logged in\" so the session persists across commands")
 			}
 
 			limiter := ratelimit.NewLimiter(ratelimit.OptionsFromEnv())

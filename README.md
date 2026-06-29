@@ -98,6 +98,18 @@ Homebrew-installed binaries are not quarantined, so there is **no** `xattr`/`cod
 
 ## Commands
 
+### Before you start
+
+**Chrome or Chromium is a runtime requirement.** `li-assist` is not a headless scraper — it drives a real signed-in browser session so LinkedIn sees the same requests your browser sends. Install [Google Chrome](https://www.google.com/chrome/) (or a Chromium package) before running any command.
+
+**`auth login` opens a real browser window.** When you run `li-assist auth login`, a visible Chrome window appears and navigates to the LinkedIn login page. Sign in as you normally would.
+
+- **2FA is normal and expected.** If LinkedIn asks for a verification code or shows a security challenge, complete it in the window — this is not a tool error.
+- **Tick "Keep me logged in."** LinkedIn sometimes issues session-only cookies when this box is unchecked; those cookies are discarded when Chrome closes and the next command reports "not logged in". Ticking the box makes the session cookie persistent.
+- **This drives your real LinkedIn account.** The session is live and authenticated. `li-assist` is read-only by design and goes through the same rate limiter as your browser, but treat it as you would any signed-in client — don't run it against accounts you don't own.
+
+After a successful login the session is stored in `~/.config/li-assist/chrome/`. All subsequent commands (headless) reuse that profile without opening a visible window.
+
 ```sh
 li-assist auth login                 # open Chrome, sign in to LinkedIn (interactive, one time)
 li-assist auth status                # session age + 14-day staleness verdict (no browser launched)

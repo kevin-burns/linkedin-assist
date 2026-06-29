@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/chromedp/cdproto/network"
@@ -20,6 +21,11 @@ import (
 const (
 	// profileSubDir is appended to the user's home to get the Chrome profile dir.
 	profileSubDir = ".config/li-assist/chrome"
+
+	// gracefulCloseTimeout is the maximum time we wait for Chrome to flush its
+	// cookie store and exit cleanly. 10 s is long enough for the OS to fsync
+	// the SQLite Cookies DB without risking a hung process.
+	gracefulCloseTimeout = 10 * time.Second
 )
 
 // DefaultProfileDir returns the canonical persistent Chrome profile directory.
@@ -40,6 +46,7 @@ type Session struct {
 	ctx         context.Context
 	profileDir  string
 	originReady bool
+	closeOnce   sync.Once
 }
 
 // linkedInOriginURL is a lightweight LinkedIn page used only to put the browser
@@ -69,7 +76,14 @@ func (s *Session) EnsureLinkedInOrigin() error {
 // headless=true is correct for normal API calls (the profile already holds
 // the login cookies). headless=false is required for the interactive Login
 // flow so the user can type credentials.
+//
+// Open returns ErrChromeNotFound (a typed sentinel) when no Chrome or Chromium
+// binary can be located on the system, with an actionable install message.
 func Open(parent context.Context, headless bool) (*Session, error) {
+	if _, found := FindChrome(); !found {
+		return nil, ErrChromeNotFound
+	}
+
 	profileDir, err := DefaultProfileDir()
 	if err != nil {
 		return nil, err
@@ -104,10 +118,38 @@ func Open(parent context.Context, headless bool) (*Session, error) {
 	}, nil
 }
 
-// Close cancels the chromedp context and shuts down the browser.
+// Close gracefully shuts down the Chrome browser so the on-disk Cookies store
+// is flushed before the process exits, then releases the allocator.
+//
+// chromedp.Cancel sends Browser.close via CDP and waits for the process to
+// stop — that is what allows Chrome to fsync its SQLite Cookies DB. A plain
+// context cancel (s.cancelCtx) does NOT flush the store.
+//
+// Close is idempotent: subsequent calls are no-ops.
 func (s *Session) Close() {
-	s.cancelCtx()
-	s.cancelAlloc()
+	s.closeOnce.Do(func() {
+		// Step 1: graceful close — sends Browser.close, waits for exit, flushes
+		// the cookie store. We derive the timeout context from s.ctx so that a
+		// parent cancellation (e.g. Ctrl-C) is still honoured, while giving
+		// Chrome up to gracefulCloseTimeout to finish.
+		tctx, tcancel := context.WithTimeout(s.ctx, gracefulCloseTimeout)
+		defer tcancel()
+
+		if err := chromedp.Cancel(tctx); err != nil {
+			// Graceful close failed: either the browser is already gone, or s.ctx
+			// was already cancelled (e.g. Ctrl-C) so Browser.close could not be
+			// sent. In that case cookies will NOT flush in this path — expected on
+			// a hard abort. Steps 2-3 below ensure the process is never leaked.
+			_ = err
+		}
+
+		// Step 2: cancel the chromedp context (no-op when Cancel already closed
+		// the browser, but necessary as a safety net in error paths).
+		s.cancelCtx()
+
+		// Step 3: release the allocator (cleans up the exec-allocator goroutine).
+		s.cancelAlloc()
+	})
 }
 
 // Context returns the chromedp browser context. Pass this to chromedp.Run or
