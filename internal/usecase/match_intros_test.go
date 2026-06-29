@@ -38,7 +38,7 @@ func makeConn(firstName, lastName, company string, connectedOn time.Time) domain
 // TestMatchIntros_ExactNormalizedMatch: job company "Foo Inc" matches
 // connection company "Foo Inc" (same string) and "Foo" (suffix stripped).
 func TestMatchIntros_ExactNormalizedMatch(t *testing.T) {
-	job := makeIntroJob(t,"Foo Inc")
+	job := makeIntroJob(t, "Foo Inc")
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 	conns := []domain.Connection{
 		makeConn("Alice", "Alpha", "Foo Inc", now),
@@ -59,7 +59,7 @@ func TestMatchIntros_ExactNormalizedMatch(t *testing.T) {
 // TestMatchIntros_LegalSuffixStripped: "Widgets GmbH" normalises to "widgets"
 // and matches a connection company of "Widgets".
 func TestMatchIntros_LegalSuffixStripped(t *testing.T) {
-	job := makeIntroJob(t,"Widgets GmbH")
+	job := makeIntroJob(t, "Widgets GmbH")
 	conn := makeConn("Carol", "Chord", "Widgets", time.Date(2025, 3, 1, 0, 0, 0, 0, time.UTC))
 
 	intros := usecase.MatchIntros(job, []domain.Connection{conn})
@@ -73,7 +73,7 @@ func TestMatchIntros_LegalSuffixStripped(t *testing.T) {
 
 // TestMatchIntros_NoCompanyJob: job with empty company name → nil.
 func TestMatchIntros_NoCompanyJob(t *testing.T) {
-	job := makeIntroJob(t,"")
+	job := makeIntroJob(t, "")
 	conn := makeConn("Dave", "Delta", "Acme", time.Time{})
 
 	intros := usecase.MatchIntros(job, []domain.Connection{conn})
@@ -84,7 +84,7 @@ func TestMatchIntros_NoCompanyJob(t *testing.T) {
 
 // TestMatchIntros_NoFalseMatch: different company names do not match.
 func TestMatchIntros_NoFalseMatch(t *testing.T) {
-	job := makeIntroJob(t,"Alpha Corp")
+	job := makeIntroJob(t, "Alpha Corp")
 	conns := []domain.Connection{
 		makeConn("Eve", "Echo", "Beta Corp", time.Time{}),
 		makeConn("Frank", "Foxtrot", "Gamma Inc", time.Time{}),
@@ -99,7 +99,7 @@ func TestMatchIntros_NoFalseMatch(t *testing.T) {
 // TestMatchIntros_RecencyOrdering: intros are sorted by ConnectedOn descending
 // (most-recent first).
 func TestMatchIntros_RecencyOrdering(t *testing.T) {
-	job := makeIntroJob(t,"SameCo")
+	job := makeIntroJob(t, "SameCo")
 	older := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	newer := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	conns := []domain.Connection{
@@ -122,7 +122,7 @@ func TestMatchIntros_RecencyOrdering(t *testing.T) {
 // TestMatchIntros_ZeroConnectedOnToleratedInSort: connections with zero
 // ConnectedOn are included and sort after dated connections.
 func TestMatchIntros_ZeroConnectedOnToleratedInSort(t *testing.T) {
-	job := makeIntroJob(t,"SameCo")
+	job := makeIntroJob(t, "SameCo")
 	known := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	conns := []domain.Connection{
 		makeConn("Zero", "Date", "SameCo", time.Time{}),
@@ -142,7 +142,7 @@ func TestMatchIntros_ZeroConnectedOnToleratedInSort(t *testing.T) {
 // TestMatchIntros_IntroFields: verifies Name, ProfileURL, Company, Position,
 // ConnectedOn, and MatchConfidence are set correctly.
 func TestMatchIntros_IntroFields(t *testing.T) {
-	job := makeIntroJob(t,"TechCo Inc")
+	job := makeIntroJob(t, "TechCo Inc")
 	connectedOn := time.Date(2026, 1, 15, 0, 0, 0, 0, time.UTC)
 	conn := domain.Connection{
 		FirstName:   "Grace",
@@ -181,7 +181,7 @@ func TestMatchIntros_IntroFields(t *testing.T) {
 // TestMatchIntros_BlankConnectionCompany: connections with blank Company never
 // match any job.
 func TestMatchIntros_BlankConnectionCompany(t *testing.T) {
-	job := makeIntroJob(t,"Acme")
+	job := makeIntroJob(t, "Acme")
 	conn := makeConn("Henry", "Hotel", "", time.Time{})
 
 	intros := usecase.MatchIntros(job, []domain.Connection{conn})
@@ -211,7 +211,7 @@ func TestMatchIntros_AllLegalSuffixes(t *testing.T) {
 
 	for _, tc := range suffixes {
 		t.Run(tc.jobCompany+"→"+tc.connCompany, func(t *testing.T) {
-			job := makeIntroJob(t,tc.jobCompany)
+			job := makeIntroJob(t, tc.jobCompany)
 			conn := makeConn("Test", "User", tc.connCompany, time.Time{})
 			intros := usecase.MatchIntros(job, []domain.Connection{conn})
 			if len(intros) != 1 {
@@ -225,7 +225,7 @@ func TestMatchIntros_AllLegalSuffixes(t *testing.T) {
 // TestMatchIntros_LeadingThe: "The Acme Corp" normalises to "acme" and matches
 // "Acme".
 func TestMatchIntros_LeadingThe(t *testing.T) {
-	job := makeIntroJob(t,"The Acme Corp")
+	job := makeIntroJob(t, "The Acme Corp")
 	conn := makeConn("Ivan", "Iota", "Acme", time.Time{})
 
 	intros := usecase.MatchIntros(job, []domain.Connection{conn})

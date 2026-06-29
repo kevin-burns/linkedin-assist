@@ -386,10 +386,10 @@ const (
 
 	// Model defaults current as of 2026-06; overridable via LI_ASSIST_ENRICH_MODEL
 	// (model IDs drift — the env override is the safety net).
-	defaultOllamaModel    = "llama3.2"
-	defaultOpenAIModel    = "gpt-5.4-mini"
-	defaultGeminiModel    = "gemini-2.5-flash"
-	defaultAnthropicModel = "claude-haiku-4-5"
+	defaultOllamaModel      = "llama3.2"
+	defaultOpenAIModel      = "gpt-5.4-mini"
+	defaultGeminiModel      = "gemini-2.5-flash"
+	defaultAnthropicModel   = "claude-haiku-4-5"
 	defaultAnthropicBaseURL = "https://api.anthropic.com"
 	openAIBaseURL           = "https://api.openai.com/v1"
 	geminiBaseURL           = "https://generativelanguage.googleapis.com/v1beta/openai"
@@ -489,4 +489,3 @@ func autoDetect(ollamaHost, model string) (*Enricher, error) {
 
 	return nil, ErrNoProvider
 }
-
