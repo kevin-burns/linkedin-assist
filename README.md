@@ -226,6 +226,12 @@ Ollama/OpenAI/Gemini are reached over the OpenAI-compatible `chat/completions` A
 
 **Ollama auto-start:** when Ollama is the chosen provider and the server is down, `li-assist` starts `ollama serve` for you and waits for it to be ready. Disable with `LI_ASSIST_OLLAMA_AUTOSTART=false`. (Auto-detect mode never starts a daemon as a side effect — only the explicitly forced `ollama` provider does.)
 
+### Choosing an enrichment model
+Enrichment is a plain extraction/de-marketing task — not a reasoning task. Avoid "thinking" models: they add large latency for no quality gain here.
+
+- Local (Ollama): prefer a small non-reasoning instruct model — qwen2.5:3b-instruct, llama3.2:3b, or gemma2:2b. **Avoid** reasoning models like qwen3.5:4b/gemma4:12b (slow, "thinking" wasted on extraction) and tiny 4k-context models like tinydolphin (job descriptions overflow the window).
+- API: OpenAI/Gemini/Anthropic all return a clean insights block in ~1–2s — the pragmatic default on resource-limited machines.
+
 ### Default models
 
 Set `LI_ASSIST_ENRICH_MODEL` to use any chat model your provider offers. Defaults (current as of 2026-06; model IDs drift, so the override is the safety net):
