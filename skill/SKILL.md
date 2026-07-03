@@ -34,22 +34,43 @@ your job is to never try.
 If a request needs something outside this surface, the honest answer is "li-assist doesn't do
 that (by design)", not a hack.
 
-## Check the binary is installed
+## Make sure the binary is installed
+
+As the **first step of any task** — before any `jobs`/`auth`/`doctor` call — run the bundled
+bootstrap once. Just run it; you don't need permission to install the user's own tool, and you don't
+need to pre-probe with `command -v` or hunt the filesystem first. The script is the single source of
+truth and is idempotent — if `li-assist` is already on `$PATH` it does nothing in ~20ms.
 
 ```bash
-command -v li-assist >/dev/null 2>&1 && li-assist --version || echo MISSING
+bash "<this skill's dir>/scripts/ensure-installed.sh"
 ```
 
-If `MISSING`: build it from source (it's not distributed as a prebuilt binary yet). Clone the
-repo and `go build`, then put the binary on `$PATH`:
+Act on its **last stdout line**:
 
-```bash
-git clone https://github.com/kevin-burns/linkedin-assist
-cd linkedin-assist && go build -o li-assist ./cmd/li-assist
-# then move ./li-assist somewhere on $PATH, e.g. ~/bin or $(go env GOPATH)/bin
-```
+- `READY <version>` → installed and runnable; proceed with the task.
+- `MISSING <reason>` → install couldn't complete; read the stderr detail and see "If the bootstrap
+  can't install" below.
 
-See the repo README's Install section for goreleaser/Homebrew plans and macOS Gatekeeper notes.
+The script tries the fastest path first and announces the one it takes in a single stderr line, e.g.
+`li-assist not installed — downloading prebuilt v0.1.4 (darwin/arm64)…`. Surface that line to the user
+so they know what happened, then continue. Its order is:
+
+1. **already on `$PATH`** → nothing to do;
+2. **download the prebuilt release binary** for this OS/arch from the latest GitHub release
+   (`kevin-burns/linkedin-assist`) — no toolchain, a few seconds. This is the normal path;
+3. **build from source** — only if the download can't be reached — preferring an existing local
+   checkout (including the current directory) and cloning only if none is found (needs Go).
+
+macOS Gatekeeper is a non-issue for both install paths: `curl`/`gh`/`go` never set the quarantine
+attribute, so nothing is blocked. (Only a binary a human downloaded through a *browser* would need
+`xattr -d com.apple.quarantine`.)
+
+**If the bootstrap can't install** (`MISSING`, e.g. offline with no local checkout and no Go): tell the
+user what the stderr said and offer the manual fallback — grab the matching
+`li-assist_<version>_<os>_<arch>.tar.gz` from <https://github.com/kevin-burns/linkedin-assist/releases>,
+extract, and put `li-assist` on `$PATH`. If the script warns its install dir isn't on `$PATH`, relay
+that fix (add `~/.local/bin` or `$(go env GOPATH)/bin` to `$PATH`) rather than invoking the binary by
+absolute path.
 
 ## First-time setup: log in
 
