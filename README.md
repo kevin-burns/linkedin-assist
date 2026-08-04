@@ -32,6 +32,10 @@ A personal, **read-only** LinkedIn command-line tool for job hunting and researc
 
 > **Requirements:** a local Google Chrome / Chromium is needed at runtime (for the signed-in browser session). Building from source additionally needs Go (see `go.mod`).
 
+**Supported platforms:** macOS and Linux (`amd64`, `arm64`). There is no Windows build —
+Windows users should run `li-assist` inside WSL. The bundled skill scripts follow the same
+support boundary: `ensure-installed.sh` needs a POSIX shell, and `li_digest.py` needs Python 3.
+
 `li-assist` is a single static binary (`CGO_ENABLED=0`, `-s -w`, ~9 MB). Four ways to install it:
 
 | Method | Status | macOS quarantine step? |

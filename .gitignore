@@ -41,3 +41,13 @@ internal/voyager/testdata/voyager/_capture/
 # is caught at any nesting level.
 **/Connections.csv
 **/connections.csv
+
+# Personal li-digest job-hunt config (real search queries, exclude lists).
+# The user copies this from skill/scripts/archetypes.example.json locally;
+# it must never be committed. The glob does not match
+# archetypes.example.json, so the tracked template is unaffected.
+**/archetypes.json
+
+# Python bytecode cache from the bundled skill scripts' test suite.
+__pycache__/
+*.pyc

@@ -197,6 +197,52 @@ server is down, `li-assist` can auto-start it (`LI_ASSIST_OLLAMA_AUTOSTART=false
 daily cap. They exist to let a cautious user go **slower / safer**, not to defeat throttling. Leave
 defaults unless the user explicitly wants to be more conservative.
 
+## Archetype digest (`li_digest.py`)
+
+`skill/scripts/li_digest.py` sweeps several saved "archetype" searches in one run and prints
+what is new, labelled by which archetypes each role matches. It exists because the daily
+question is "what appeared across all my lanes", not "what matches one keyword".
+
+Python 3 standard library only — no jq, no packages to install. **macOS and Linux only**,
+matching what `li-assist` itself ships; Windows users need WSL.
+
+Archetypes live in `~/.config/li-assist/archetypes.json` — **not** in the repo, because it is
+personal data. `skill/scripts/archetypes.example.json` is the template. Set up once, from the
+repo root:
+
+```bash
+mkdir -p ~/.config/li-assist ~/.local/bin
+cp skill/scripts/archetypes.example.json ~/.config/li-assist/archetypes.json
+ln -s "$PWD/skill/scripts/li_digest.py" ~/.local/bin/li-digest
+```
+
+The symlink is what makes `li-digest` a command. Without it, substitute
+`python3 skill/scripts/li_digest.py` for `li-digest` in every example below.
+
+```bash
+li-digest --seed                 # once: prime the cache so the next run is a true delta
+li-digest                        # the daily table
+li-digest --json                 # pipeable JSON on stdout
+li-digest --only em,platform     # one or two lanes
+li-digest --window 30            # widen the lookback window in days (default: 14)
+li-digest --config ~/tmp/test-archetypes.json  # point at an alternate archetypes file
+li-digest show 4431723620        # full description for one posting
+```
+
+Exit codes: `0` clean, `1` one or more archetypes failed (the rest still printed), `2` config
+or usage error — including a dead session, a rate limit or blown daily cap, or the
+circuit breaker aborting after the first two archetypes fail in a row.
+
+Each archetype carries both a `query` (LinkedIn boolean, server-side) and a `match` (local
+regex). The `match` is what produces multi-archetype labels — a role can be `Platform, EM`.
+**When you change a `query`, review its `match`.** Drift between the two is the most likely
+defect in this tool, and the test suite asserts each `match` fires on a plausible title.
+
+The digest never passes `--enrich`: four archetypes with enrichment is four searches plus up
+to 100 detail fetches, which is a bad daily habit against the rate limiter. Descriptions come
+from `li-digest show` on the few roles that earn a closer look — `jobs get` already returns the
+full description without any LLM.
+
 ## Recipes
 
 **Daily new-jobs sweep, local-LLM enriched:**

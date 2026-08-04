@@ -1,0 +1,34 @@
+{
+  "defaults": {
+    "location": "Germany",
+    "limit": 50,
+    "exclude_title": ["recruiter"],
+    "exclude_company": []
+  },
+  "archetypes": [
+    {
+      "name": "platform",
+      "label": "Platform",
+      "query": "\"platform engineer\" OR \"cloud engineer\" OR \"site reliability engineer\" OR terraform",
+      "match": "platform|cloud engineer|terraform|terragrunt|infrastructure|sre|site reliability|devops"
+    },
+    {
+      "name": "fde",
+      "label": "FDE",
+      "query": "\"forward deployed engineer\" OR \"professional services engineer\" OR \"solutions engineer\" OR \"customer engineer\"",
+      "match": "forward.deployed|professional services|solutions engineer|customer engineer|delivery engineer|ai engineer"
+    },
+    {
+      "name": "em",
+      "label": "EM",
+      "query": "\"engineering manager\" OR \"tech lead\" OR \"head of platform\"",
+      "match": "engineering manager|tech lead|technical lead|head of (platform|engineering)|sre manager"
+    },
+    {
+      "name": "architect",
+      "label": "Architect",
+      "query": "\"solution architect\" OR \"cloud architect\" OR \"principal architect\"",
+      "match": "solutions? architect|cloud architect|principal architect|platform architect"
+    }
+  ]
+}
