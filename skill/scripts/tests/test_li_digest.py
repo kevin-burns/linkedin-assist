@@ -126,7 +126,7 @@ class TestLoadConfig(ConfigTempDir):
     def test_example_config_shipped_in_the_repo_is_valid(self):
         example = Path(__file__).resolve().parent.parent / "archetypes.example.json"
         cfg = li_digest.load_config(example)
-        self.assertEqual(len(cfg.archetypes), 4)
+        self.assertEqual(len(cfg.archetypes), 5)
 
 
 class TestPureHelpers(ConfigTempDir):
@@ -199,6 +199,8 @@ class TestPureHelpers(ConfigTempDir):
             "Forward Deployed Engineer": "FDE",
             "Engineering Manager": "EM",
             "Solution Architect": "Architect",
+            "KI Engineer (m/w/d)": "AI",
+            "Generative AI Platform Engineer": "AI",
         }
         for title, label in expected.items():
             with self.subTest(title=title):

@@ -16,7 +16,7 @@
       "name": "fde",
       "label": "FDE",
       "query": "\"forward deployed engineer\" OR \"professional services engineer\" OR \"solutions engineer\" OR \"customer engineer\"",
-      "match": "forward.deployed|professional services|solutions engineer|customer engineer|delivery engineer|ai engineer"
+      "match": "forward.deployed|professional services|solutions engineer|customer engineer|delivery engineer"
     },
     {
       "name": "em",
@@ -28,7 +28,13 @@
       "name": "architect",
       "label": "Architect",
       "query": "\"solution architect\" OR \"cloud architect\" OR \"principal architect\"",
-      "match": "solutions? architect|cloud architect|principal architect|platform architect"
+      "match": "solutions? architect|cloud architect|principal architect|platform architect|architekt"
+    },
+    {
+      "name": "ai",
+      "label": "AI",
+      "query": "\"AI engineer\" OR \"AI architect\" OR \"AI platform\" OR \"generative AI\" OR \"KI Engineer\" OR \"Künstliche Intelligenz\"",
+      "match": "\\bai\\b|\\bki\\b|künstliche intelligenz|generative|machine learning|\\bllm\\b|agentic|mlops"
     }
   ]
 }
