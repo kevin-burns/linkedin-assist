@@ -21,10 +21,10 @@ jobs:
         go: ['1.26']
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
           cache: true
@@ -38,21 +38,50 @@ jobs:
       - name: Build
         run: make build
 
+  # The bundled skill scripts are Python, not Go, so the `test` job above never
+  # exercises them. Without this job the digest's suite only runs on whichever
+  # machine happens to type `make check`.
+  #
+  # Note there is deliberately no `pip install` step anywhere here: the scripts
+  # are stdlib-only by contract, so a third-party import creeping in shows up as
+  # a ModuleNotFoundError rather than passing silently on a pre-populated runner.
+  skill-scripts:
+    name: skill scripts (python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Oldest and newest supported, plus the two in between that the suite
+        # has actually been run against. 3.9 is the floor: it is what macOS
+        # ships as /usr/bin/python3, and nothing older has ever been tested.
+        python: ['3.9', '3.10', '3.13', '3.14']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Unit tests
+        run: python -m unittest discover -s skill/scripts/tests -v
+
   lint-security:
     name: lint + security
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version: '1.26'
           cache: true
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
         with:
           # Pinned to match the prek hook (.pre-commit-config.yaml). Bump both
           # together; `latest` here would silently drift from local.
@@ -65,3 +94,9 @@ jobs:
 
       - name: govulncheck (known CVEs)
         run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+
+      # The bootstrap must stay bash — it runs before anything is installed and
+      # cannot assume an interpreter — so it needs its own linter. Run once here
+      # rather than per-Python-version in the skill-scripts matrix.
+      - name: shellcheck (skill bootstrap)
+        run: shellcheck skill/scripts/ensure-installed.sh
