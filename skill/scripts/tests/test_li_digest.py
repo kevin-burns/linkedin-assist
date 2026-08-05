@@ -1356,37 +1356,12 @@ class TestShow(unittest.TestCase):
         self.assertIn("no description", self.out.getvalue())
 
 
-class TestDocsMatchImplementation(unittest.TestCase):
-    """SKILL.md must not document flags the parser does not have."""
-
-    def test_documented_flags_all_exist(self):
-        """Only flags shown in a li-digest *invocation* are checked — prose
-        naming another tool's flags (e.g. li-assist's --enrich) is exempt by
-        construction, so authors don't have to avoid real flag names in
-        prose to keep this guard green.
-        """
-        skill_md = Path(__file__).resolve().parents[2] / "SKILL.md"
-        text = skill_md.read_text(encoding="utf-8")
-        section = text.split("## Archetype digest", 1)[1].split("\n## ", 1)[0]
-        fences = re.findall(r"```(?:[a-zA-Z]*)\n(.*?)\n```", section, re.DOTALL)
-        li_digest_blocks = [
-            block for block in fences
-            if next(
-                (line.strip() for line in block.splitlines() if line.strip()), ""
-            ).startswith("li-digest")
-        ]
-        documented = set()
-        for block in li_digest_blocks:
-            documented.update(re.findall(r"(?<![\w-])--[a-z][a-z-]+", block))
-        parser_flags = set()
-        for action in li_digest.build_parser()._actions:
-            parser_flags.update(opt for opt in action.option_strings if opt.startswith("--"))
-        self.assertTrue(
-            documented,
-            "found no flags in any li-digest command block — check the "
-            "heading split and the li-digest fence filter",
-        )
-        self.assertEqual(documented - parser_flags, set())
+# The SKILL.md doc-drift guard (checks documented `li-digest ...` / `li-report
+# ...` invocation flags against each tool's real build_parser()) has moved to
+# test_li_report.py's TestDocsMatchImplementation, generalized to cover both
+# tools in one place. It moved rather than staying split across two files
+# because checking li-report's flags means importing li_report, and this
+# file has no other reason to know that module exists.
 
 
 if __name__ == "__main__":

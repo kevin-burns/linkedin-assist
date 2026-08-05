@@ -214,10 +214,12 @@ repo root:
 mkdir -p ~/.config/li-assist ~/.local/bin
 cp skill/scripts/archetypes.example.json ~/.config/li-assist/archetypes.json
 ln -s "$PWD/skill/scripts/li_digest.py" ~/.local/bin/li-digest
+ln -s "$PWD/skill/scripts/li_report.py" ~/.local/bin/li-report
 ```
 
-The symlink is what makes `li-digest` a command. Without it, substitute
-`python3 skill/scripts/li_digest.py` for `li-digest` in every example below.
+The symlinks are what make `li-digest` and `li-report` commands. Without them, substitute
+`python3 skill/scripts/li_digest.py` for `li-digest` and `python3 skill/scripts/li_report.py`
+for `li-report` in every example below.
 
 ```bash
 li-digest --seed                 # once: prime the cache so the next run is a true delta
@@ -233,6 +235,11 @@ li-digest show 4431723620        # full description for one posting
 Exit codes: `0` clean, `1` one or more archetypes failed (the rest still printed), `2` config
 or usage error — including a dead session, a rate limit or blown daily cap, or the
 circuit breaker aborting after the first two archetypes fail in a row.
+
+**Known gap:** piping `li-digest` into something that closes the stream early — `| head`, or
+quitting `less` before the end — raises `BrokenPipeError` and prints a traceback. Everything
+written before that point is still valid. `li_report.py` handles this; `li_digest.py` does not
+yet. Redirect to a file, or pipe through `cat`, if it matters.
 
 Every non-seed run that sweeps every archetype cleanly (no `--only`, no archetype failure) also
 writes `.digest-lastrun` beside the config, and the next run uses it to add a `"Posted since your
@@ -273,6 +280,28 @@ locally, for free, applied after enrichment and before rendering — in both tab
 output. It keeps only rows whose `location` contains `(Remote)` case-insensitively; **a row with
 no marker at all is excluded, not assumed remote.** If `--remote` removes every row, the stderr
 message says the filter emptied the result, not that nothing was found.
+
+### `li-report` — self-contained HTML export
+
+`skill/scripts/li_report.py` is a sibling of `li_digest.py`, not a merge into it — presentation
+stays out of the 800-line digest script on purpose. It reads the same
+`~/.config/li-assist/archetypes.json` and the li-assist job cache
+(`~/.config/li-assist/cache/jobs.jsonl`) and renders one self-contained HTML file: CSS and JS
+are inlined, there is no CDN reference, and the report opens with **no network** — mail it, keep
+it, read it on a train. It honours `exclude_company` against the cache (which predates config
+changes), includes in-window and undated postings, and excludes anything older than the window.
+
+```bash
+li-report                        # self-contained HTML to stdout — pipe or redirect
+li-report --window 30 --out report.html
+li-report --config ~/tmp/test-archetypes.json --generated-at "$(date -u +'%Y-%m-%d %H:%M UTC')" --out digest.html
+```
+
+Same `--window` (default 14) and `--config` as `li-digest`. `--generated-at` stamps the report
+with a caller-supplied timestamp/label instead of calling the clock inside the renderer (defaults
+to the current UTC time when omitted). `--out` omitted writes the HTML to stdout so it pipes;
+given, it writes the file and reports its size to stderr. Exit codes: `0` clean, `2` a config or
+usage error — including a negative `--window`, a missing archetypes file, or a missing cache.
 
 ## Recipes
 
