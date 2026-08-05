@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -654,6 +655,36 @@ def cmd_show(arg, run=subprocess.run, out=None) -> int:
     return 0
 
 
+def _silence_broken_pipe() -> None:
+    """Point the real stdout fd at /dev/null after a BrokenPipeError.
+
+    CPython flushes the standard streams at interpreter shutdown. If data
+    is still buffered when the pipe dies, that flush raises a SECOND
+    BrokenPipeError after main has already returned cleanly, which CPython
+    reports as `Exception ignored in: <_io.TextIOWrapper name='<stdout>'>`
+    and turns into exit 120 -- so `| head` still looks like a crash even
+    though the exception was handled. This is the idiom the CPython docs
+    prescribe for exactly that.
+
+    Measured honestly: it does NOT currently change the outcome for
+    li-digest, because both output branches emit the whole document in a
+    single print() and nothing is left buffered once that write fails.
+    Reproducing the shutdown error needs many small writes (a 300k-line
+    print-per-line loop gives exit 120 without this and 0 with it -- see
+    TestSilenceBrokenPipe). It is kept because it is one cheap call that
+    makes the exit code independent of how the output happens to be
+    chunked, and the chunking is an implementation detail nobody would
+    think to check when changing render_table.
+
+    Under test `out` is a StringIO with no real fileno(), hence the guard.
+    """
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        os.dup2(devnull, sys.stdout.fileno())
+    except (OSError, ValueError):
+        pass
+
+
 def main(argv=None, run=subprocess.run, out=None, err=None, today=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     out = out if out is not None else sys.stdout
@@ -788,6 +819,23 @@ def main(argv=None, run=subprocess.run, out=None, err=None, today=None) -> int:
         if failed:
             log(f"li-digest: {len(failed)} archetype(s) failed: {', '.join(failed)}")
             return 1
+        return 0
+
+    except BrokenPipeError:
+        # `li-digest | head` closes stdin as soon as it has its lines. That
+        # is normal pipeline behaviour, not a failure, so exit 0 rather than
+        # letting a traceback out of an otherwise successful run.
+        #
+        # Caught at the OUTER level on purpose, which means an interrupted
+        # render returns before the last-run stamp is written. That is the
+        # conservative direction and it matches the rule the stamp block
+        # states below: the stamp advances only on a clean, full run.
+        # Truncating the output with `head` means you did NOT see every new
+        # posting, so advancing the stamp would silently demote the rows you
+        # never read from "fresh" to merely "in window" tomorrow. Leaving it
+        # unwritten costs nothing -- no extra calls, and the next run just
+        # reports the same roles as new again.
+        _silence_broken_pipe()
         return 0
 
     except (ConfigError, AuthError) as exc:
