@@ -327,10 +327,17 @@ class TestDeterminism(unittest.TestCase):
 # this one" evidence each of these is meant to reproduce.
 # ---------------------------------------------------------------------------
 
+# The archetype `name` and `exclude_company` are hostile too, because the
+# footer interpolates both and they are the only two escape sites a safe
+# config leaves unexercised. They are operator-controlled -- archetypes.json
+# is your own file, not attacker input -- but li_digest.load_config
+# constrains `name` only to a non-empty string and does not validate
+# `exclude_company` at all, and the escaping claim is defence-in-depth, so
+# it gets a test rather than an assertion in a docstring.
 HOSTILE_CONFIG = {
-    "defaults": {},
+    "defaults": {"exclude_company": ["<b>XE9</b>"]},
     "archetypes": [
-        {"name": "hostile", "label": "<b>XA7</b>",
+        {"name": "<script>XN8</script>", "label": "<b>XA7</b>",
          "query": "hostile", "match": "XT1"},
     ],
 }
@@ -401,12 +408,18 @@ class TestHostileInputIsEscaped(unittest.TestCase):
         """Guards the else-branch of the title fork specifically.
 
         `test_title_is_escaped` passes on the anchor branch alone, so it
-        cannot detect the else-branch escape being removed. This asserts the
-        escaped title appears at least twice -- once per row -- which only
-        holds if BOTH branches escape.
+        cannot detect the else-branch escape being removed.
+
+        Scoped to <tbody> and asserted EXACTLY, both deliberately. Doc-wide
+        the escaped title appears three times -- two table cells plus the
+        row-1 drawer summary -- so a doc-wide `>= 2` still passes with the
+        else-branch escape removed, which is the inert-guard failure this
+        test exists to avoid being an instance of. Inside <tbody> it is one
+        per row, so 2 holds only if BOTH fork branches escape.
         """
         escaped = html.escape(HOSTILE_TITLE, quote=True)
-        self.assertGreaterEqual(self.doc.count(escaped), 2)
+        tbody = self.doc.split("<tbody>", 1)[1].split("</tbody>", 1)[0]
+        self.assertEqual(tbody.count(escaped), 2)
         self.assertNotIn("<script>XT1</script>", self.doc)
 
     def test_title_is_escaped(self):
@@ -416,6 +429,18 @@ class TestHostileInputIsEscaped(unittest.TestCase):
     def test_exactly_one_real_script_tag_the_reports_own(self):
         self.assertEqual(self.doc.count("<script>"), 1)
         self.assertEqual(self.doc.count("<script "), 0)
+
+    # -- footer: archetype names + excluded companies -----------------------
+
+    def test_footer_archetype_names_and_exclusions_are_escaped(self):
+        """The two operator-controlled sites, which a safe config never
+        reaches. Both interpolate into the footer; dropping either _esc
+        renders a live second <script> or a live <b>."""
+        footer = self.doc.split("<footer>", 1)[1].split("</footer>", 1)[0]
+        self.assertIn(html.escape("<script>XN8</script>", quote=True), footer)
+        self.assertIn(html.escape("<b>XE9</b>", quote=True), footer)
+        self.assertNotIn("<script>XN8</script>", footer)
+        self.assertNotIn("<b>XE9</b>", footer)
 
     # -- company name: table cell -------------------------------------------
 
@@ -574,9 +599,14 @@ class TestUnsanitisableUrnAtRenderLevel(unittest.TestCase):
         self.assertNotIn("href=#j", self.doc)
 
     def test_no_colliding_empty_details_id(self):
+        """Both fixture urns sanitise to empty, so the invariant is that
+        NEITHER drawer carries an id -- asserted positively. A
+        len(ids) == len(set(ids)) check would read as duplicate-detection
+        while being vacuous here: healthy, ids is []; mutated, both ids are
+        'j' and the assertNotIn above has already failed."""
         self.assertNotIn("id='j'", self.doc)
         ids = re.findall(r"<details[^>]*\bid='([^']*)'", self.doc)
-        self.assertEqual(len(ids), len(set(ids)), f"duplicate details ids: {ids}")
+        self.assertEqual(ids, [], "rows with unsanitisable urns must carry no details id")
 
 
 class TestPostedCellIsEscaped(unittest.TestCase):
@@ -763,6 +793,17 @@ class TestMainAsScript(unittest.TestCase):
     is exactly how the real bug was first found, via the live smoke test,
     not via `unittest discover`.
     """
+
+    def test_file_is_executable(self):
+        """SKILL.md tells you to symlink this into ~/.local/bin, so the mode
+        is part of the interface: at 100644 the documented first command
+        exits 126 (Permission denied). The two subprocess tests below pass
+        `sys.executable` explicitly and so bypass the shebang path
+        entirely -- neither would notice the bit being lost."""
+        self.assertTrue(
+            os.access(li_report.__file__, os.X_OK),
+            f"{li_report.__file__} must be executable -- SKILL.md symlinks it into ~/.local/bin",
+        )
 
     def test_runs_as_a_script_and_prints_html(self):
         with tempfile.TemporaryDirectory() as home:
