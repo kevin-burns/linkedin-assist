@@ -241,6 +241,25 @@ The `--seed` step exists because the first run against an empty cache would repo
 **The honest answer to the NEW caveat above:** every non-seed run that sweeps *every* archetype cleanly (no `--only`, no archetype failure) writes `.digest-lastrun` beside the archetypes file, and the *next* run uses that stamp to add a `Posted since your last digest` bucket — anything with `posted_at` on or after the stamp, ahead of the usual In window / Undated / Older buckets. That's `posted_at`-based, not cache-membership-based, so it doesn't inherit the sweep/diff churn: freshness is decided by when a job was actually posted, not by whether it happens to be missing from the cache this time. The comparison is date-granular and **inclusive**, though, so it is not "shows once and never again" — a job posted on the same calendar date as your last run still shows as fresh on every later run made *that same day*; it stops being fresh only once a run's stamp moves past that date. A run with a failed archetype or narrowed with `--only` does **not** advance the stamp — a partial run has no business promising "I looked at everything". The first real run (no marker yet) has no fresh bucket, same as today; `--seed` never writes the marker, since seeding prints no output and would leave the following run's fresh bucket showing nothing.
 
 
+### Standalone HTML report (`li-report`)
+
+`skill/scripts/li_report.py` renders the same cached prospects as **one self-contained HTML file** — inline CSS and JS, no CDN, no build step. It opens by double-clicking, with no network, and stays readable years from now because nothing is fetched at view time.
+
+```sh
+li-report                      # HTML on stdout, so it pipes or redirects
+li-report --out prospects.html # or write it straight to a file
+li-report --window 30          # same window semantics as li-digest
+li-report --config ~/tmp/alt-archetypes.json
+```
+
+It reads the cache `li-digest` already wrote, so it costs **zero rate-limited calls** — run it as often as you like. The page carries a filter bar (free text, archetype lane, workplace type, plus multi-lane / starred / has-description toggles) with a live count, a sortable summary table, and a collapsible full description for every job whose posting you have actually fetched with `li-digest show`. Dark mode follows `prefers-color-scheme`.
+
+It is a **sibling** of `li_digest.py` rather than a flag on it: the digest's job is sweeping, and keeping presentation out of a script that is already 800+ lines was the point. It imports the digest's config loading, bucketing and link building rather than reimplementing any of it.
+
+Job titles, company names and descriptions are untrusted text from LinkedIn rendered into HTML, so escaping is the whole risk surface — every interpolation is escaped, fragment identifiers are constrained at source as well as quoted, and the test suite falsifies each escape site individually rather than asserting the output merely looks right.
+
+Exit codes match `li-digest`: `0` clean, `2` a config or usage error. Unlike `li-digest`, piping it into a command that closes the stream early (`| head`) is handled cleanly.
+
 ---
 
 ### Warm intros (offline)
