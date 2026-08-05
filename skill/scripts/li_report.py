@@ -397,10 +397,23 @@ def main(argv=None, out=None, err=None) -> int:
                 print(document, file=out)
             except BrokenPipeError:
                 # `li-report | head` closes stdin early; that is normal
-                # pipeline behaviour, not a failure. Redirect the real fd
-                # to /dev/null so Python's own atexit flush doesn't raise a
-                # second BrokenPipeError on the way out. `out` in tests is
-                # an io.StringIO with no real fileno(); guard for that.
+                # pipeline behaviour, not a failure. Redirect the real fd to
+                # /dev/null so an interpreter-shutdown flush cannot raise a
+                # second BrokenPipeError on the way out -- the idiom the
+                # CPython docs prescribe.
+                #
+                # Measured, not assumed: this branch emits the whole document
+                # in ONE print(), so nothing is left buffered when that write
+                # fails, and the redirect does not currently change the exit
+                # code. Kept so the exit code cannot start depending on how
+                # the output happens to be chunked -- nor on which CPython
+                # you are running, since the shutdown-flush symptom is
+                # itself platform- and version-dependent. The redirect is
+                # deterministic everywhere and is asserted directly in
+                # test_li_digest.TestSilenceBrokenPipe.
+                #
+                # `out` in tests is an io.StringIO with no real fileno();
+                # guard for that.
                 try:
                     devnull = os.open(os.devnull, os.O_WRONLY)
                     os.dup2(devnull, sys.stdout.fileno())

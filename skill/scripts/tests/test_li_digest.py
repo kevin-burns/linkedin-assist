@@ -6,7 +6,7 @@ import re
 import sys
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -1362,6 +1362,233 @@ class TestShow(unittest.TestCase):
 # tools in one place. It moved rather than staying split across two files
 # because checking li-report's flags means importing li_report, and this
 # file has no other reason to know that module exists.
+
+
+import os  # noqa: E402  (grouped with the pipe tests below)
+import subprocess as _subprocess  # noqa: E402
+
+
+def close_pipe_early(argv, env):
+    """Run argv, read one line of stdout, close the pipe. Returns
+    (returncode, stderr).
+
+    This is what `| head -1` does to a producer, minus the shell: a shell
+    pipeline's exit status is the LAST command's, so `sh -c "prog | head"`
+    reports head's 0 no matter how prog dies, and any assertion on it is
+    inert. Driving the pipe directly keeps the child's own status.
+    """
+    proc = _subprocess.Popen(argv, stdout=_subprocess.PIPE,
+                             stderr=_subprocess.PIPE, env=env)
+    try:
+        proc.stdout.readline()
+        proc.stdout.close()
+        stderr = proc.stderr.read().decode("utf-8", "replace")
+    finally:
+        proc.stderr.close()
+        proc.wait()
+    return proc.returncode, stderr
+
+
+class _DeadPipe(io.StringIO):
+    """A stdout whose first write fails the way `| head` makes it fail."""
+
+    def write(self, _data):
+        raise BrokenPipeError(32, "Broken pipe")
+
+
+class TestBrokenPipe(ConfigTempDir):
+    """`li-digest | head` is the obvious way to peek at a long table, and it
+    used to end in a BrokenPipeError traceback and a non-zero exit on an
+    otherwise successful run. head closing its stdin early is normal
+    pipeline behaviour, not a failure.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.path = self.write_config(GOOD_CONFIG)
+        self.err = io.StringIO()
+        self.runner = FakeRunner(by_query={
+            "platform engineer": FakeProc(json.dumps(PLATFORM_JOBS)),
+            "engineering manager": FakeProc(json.dumps(EM_JOBS)),
+        })
+        li_digest.main(
+            ["--config", str(self.path), "--seed"], run=self.runner,
+            out=io.StringIO(), err=self.err, today=date(2026, 8, 4),
+        )
+
+    def run_with_dead_pipe(self, *argv):
+        return li_digest.main(
+            ["--config", str(self.path), *argv], run=self.runner,
+            out=_DeadPipe(), err=self.err, today=date(2026, 8, 4),
+        )
+
+    def test_table_output_exits_0_on_a_closed_pipe(self):
+        self.assertEqual(self.run_with_dead_pipe(), 0)
+
+    def test_json_output_exits_0_on_a_closed_pipe(self):
+        """--json writes through a different print() call than the table, so
+        it needs its own case -- a handler wrapped around only the table
+        branch would leave `li-digest --json | head` still crashing."""
+        self.assertEqual(self.run_with_dead_pipe("--json"), 0)
+
+    def test_nothing_is_reported_as_an_error_on_stderr(self):
+        before = self.err.getvalue()
+        self.run_with_dead_pipe()
+        self.assertNotIn("BrokenPipe", self.err.getvalue()[len(before):])
+
+    def test_the_last_run_stamp_is_not_advanced(self):
+        """The deliberate half of the fix. Truncating with `head` means you
+        did NOT read every new posting, so advancing the stamp would demote
+        the rows you never saw from "fresh" to merely "in window" on the
+        next run. Leaving it unwritten costs no extra calls."""
+        stamp = li_digest.last_run_marker(self.path)
+        self.assertFalse(stamp.exists())
+        self.run_with_dead_pipe()
+        self.assertFalse(
+            stamp.exists(),
+            "a run truncated by `| head` must not advance the last-run stamp",
+        )
+
+    def test_a_clean_run_still_advances_it(self):
+        """Pins the test above to the pipe, not to a stamp that never
+        writes: same fixture, live stdout, stamp appears."""
+        stamp = li_digest.last_run_marker(self.path)
+        li_digest.main(
+            ["--config", str(self.path)], run=self.runner,
+            out=io.StringIO(), err=self.err, today=date(2026, 8, 4),
+        )
+        self.assertTrue(stamp.exists())
+
+
+class TestBrokenPipeInARealPipeline(ConfigTempDir):
+    """The in-process tests above cannot see the failure this actually
+    fixes. Python flushes stdout at interpreter shutdown, so even with the
+    exception handled, a real `li-digest | head` printed
+
+        Exception ignored on flushing sys.stdout: BrokenPipeError
+
+    to stderr and exited non-zero AFTER main returned 0. Only a real
+    process with a real pipe reproduces it, so this test builds one: a stub
+    `li-assist` on PATH, then an actual shell pipeline into `head`.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.path = self.write_config(GOOD_CONFIG)
+        self.bin = self.tmp / "bin"
+        self.bin.mkdir()
+        # Big enough to overflow the OS pipe buffer, and dated off the real
+        # clock. Both matter:
+        #
+        # A 2-row table is ~200 bytes. The reader can close its end and the
+        # writer still completes, because the whole table fits in the 64 KiB
+        # pipe buffer -- no BrokenPipeError is ever raised, and a test built
+        # on that fixture passes with the handler deleted. 4000 rows is
+        # ~400 KB, which cannot fit, so the write genuinely fails.
+        #
+        # The dates come from datetime.now rather than a 2026 literal
+        # because these rows must fall inside --window's 14 days. A hardcoded
+        # date silently ages out of the window, the table renders empty, and
+        # the test goes quiet again -- the same inert failure by a slower
+        # route.
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
+        many = [job(str(i), f"Platform Engineer {i}", posted=today) for i in range(4000)]
+        stub = self.bin / "li-assist"
+        stub.write_text(
+            "#!/bin/sh\n"
+            f"cat <<'JSON'\n{json.dumps(many)}\nJSON\n",
+            encoding="utf-8",
+        )
+        stub.chmod(0o755)
+        self.env = {**os.environ, "PATH": f"{self.bin}:{os.environ['PATH']}",
+                    "PYTHONDONTWRITEBYTECODE": "1"}
+        self.script = str(Path(li_digest.__file__).resolve())
+        seed = _subprocess.run(
+            [sys.executable, self.script, "--config", str(self.path), "--seed"],
+            capture_output=True, text=True, env=self.env,
+        )
+        self.assertEqual(seed.returncode, 0, seed.stderr)
+
+    def run_into_a_closed_pipe(self, *argv):
+        """`| head` without a shell.
+
+        A `sh -c "... | head -1"` would report HEAD's exit status, not
+        Python's, so an assertion on it could never fail -- reading one line
+        and closing the pipe reproduces the same condition while keeping the
+        child's real returncode.
+        """
+        return close_pipe_early(
+            [sys.executable, self.script, "--config", str(self.path), *argv], self.env)
+
+    def test_piping_into_head_is_silent_and_exits_0(self):
+        code, stderr = self.run_into_a_closed_pipe()
+        self.assertNotIn("BrokenPipeError", stderr)
+        self.assertNotIn("Exception ignored", stderr)
+        self.assertEqual(code, 0, stderr)
+
+    def test_json_piped_into_head_is_silent_and_exits_0(self):
+        code, stderr = self.run_into_a_closed_pipe("--json")
+        self.assertNotIn("BrokenPipeError", stderr)
+        self.assertNotIn("Exception ignored", stderr)
+        self.assertEqual(code, 0, stderr)
+
+
+class TestSilenceBrokenPipe(unittest.TestCase):
+    """_silence_broken_pipe's CALL SITE in main survives deletion, because
+    both output branches emit the document in one print() and nothing is
+    left buffered when that write fails. An untested defensive call is how
+    dead code accumulates, so the helper's own contract is asserted here
+    directly: after it runs, the real stdout fd points at /dev/null, so
+    anything written afterwards -- including CPython's flush at interpreter
+    shutdown -- goes nowhere instead of at a dead pipe.
+
+    Asserting the CONTRACT rather than the symptom, deliberately. The
+    symptom (`Exception ignored in: <_io.TextIOWrapper name='<stdout>'>`
+    plus exit 120 from the shutdown flush) depends on how much data is
+    still buffered when the pipe dies, and that varies by platform and
+    CPython version: a 300k-line print-per-line loop reproduces it on macOS
+    3.9/3.10 and on Linux 3.14, but not on Linux 3.9/3.10/3.13. A test
+    pinned to the symptom is red on half the support matrix while the
+    helper works perfectly on all of it. The redirect itself is
+    deterministic everywhere.
+    """
+
+    SCRIPT = (
+        "import sys\n"
+        "sys.path.insert(0, {scripts!r})\n"
+        "import li_digest\n"
+        "sys.stdout.write('before\\n')\n"
+        "sys.stdout.flush()\n"
+        "{call}\n"
+        "sys.stdout.write('after\\n')\n"
+        "sys.stdout.flush()\n"
+    )
+
+    def run_capturing_stdout(self, call):
+        scripts = str(Path(li_digest.__file__).resolve().parent)
+        with tempfile.TemporaryDirectory() as tmp:
+            probe = Path(tmp) / "probe.py"
+            probe.write_text(self.SCRIPT.format(scripts=scripts, call=call), encoding="utf-8")
+            landed = Path(tmp) / "stdout.txt"
+            with landed.open("w") as sink:
+                proc = _subprocess.run(
+                    [sys.executable, str(probe)], stdout=sink, stderr=_subprocess.PIPE,
+                    env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                )
+            self.assertEqual(proc.returncode, 0, proc.stderr.decode("utf-8", "replace"))
+            return landed.read_text(encoding="utf-8")
+
+    def test_writes_after_the_helper_go_to_devnull(self):
+        landed = self.run_capturing_stdout("li_digest._silence_broken_pipe()")
+        self.assertIn("before", landed)
+        self.assertNotIn("after", landed)
+
+    def test_control_without_the_helper_both_writes_land(self):
+        """Pins the test above to the helper rather than to some other
+        reason 'after' might go missing."""
+        landed = self.run_capturing_stdout("pass")
+        self.assertIn("before", landed)
+        self.assertIn("after", landed)
 
 
 if __name__ == "__main__":

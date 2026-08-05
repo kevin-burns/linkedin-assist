@@ -236,10 +236,11 @@ Exit codes: `0` clean, `1` one or more archetypes failed (the rest still printed
 or usage error — including a dead session, a rate limit or blown daily cap, or the
 circuit breaker aborting after the first two archetypes fail in a row.
 
-**Known gap:** piping `li-digest` into something that closes the stream early — `| head`, or
-quitting `less` before the end — raises `BrokenPipeError` and prints a traceback. Everything
-written before that point is still valid. `li_report.py` handles this; `li_digest.py` does not
-yet. Redirect to a file, or pipe through `cat`, if it matters.
+Piping into something that closes the stream early — `| head`, or quitting `less` before the
+end — exits `0` silently. Everything written before that point is valid. One deliberate
+consequence: a truncated run does **not** advance `.digest-lastrun`, because you did not read
+every new posting, and advancing it would demote the rows you never saw from `fresh` to merely
+`in window` on the next run. Re-run without the pipe to get the stamp.
 
 Every non-seed run that sweeps every archetype cleanly (no `--only`, no archetype failure) also
 writes `.digest-lastrun` beside the config, and the next run uses it to add a `"Posted since your
