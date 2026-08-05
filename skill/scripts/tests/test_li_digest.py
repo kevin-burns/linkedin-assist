@@ -1657,5 +1657,79 @@ class TestFirstRunExperience(ConfigTempDir):
         self.assertIn("--seed", err)
 
 
+def _query_terms(query):
+    """Searchable terms in a LinkedIn boolean, operators removed.
+
+    Quoted phrases first, then bare words from what remains once quoted
+    sections are blanked -- otherwise a word inside a phrase is counted
+    twice and, worse, checked in isolation when only the phrase is real.
+    """
+    operators = {"or", "and", "not"}
+    phrases = re.findall(r'"([^"]+)"', query)
+    outside = re.sub(r'"[^"]*"', " ", query)
+    bare = [w for w in re.findall(r"(?<![\w\"])([A-Za-z][\w+.#-]*)(?![\w\"])", outside)
+            if w.lower() not in operators]
+    return phrases + bare
+
+
+class TestQueryMatchParity(ConfigTempDir):
+    """The project's named top risk, made automatic.
+
+    Each archetype carries a `query` (a LinkedIn boolean deciding what is
+    FETCHED) and a `match` (a local regex deciding what is LABELLED). They
+    express one intent in two languages and nothing keeps them in step, so
+    a later edit to one silently strips meaning from the other: terms the
+    query returns become unlabelled rows, and the archetype quietly stops
+    describing what it fetches.
+
+    This asserts the direction that actually causes silent loss -- every
+    term the query can return must be matchable. The reverse is NOT
+    asserted: a match may legitimately be broader than its query, because
+    labelling is multi-archetype and a job fetched by one lane is
+    routinely labelled by several.
+
+    Heuristic by nature, and scoped to the SHIPPED example where the
+    boolean syntax is ours. It is not run against a user's own file --
+    failing someone's personal config on a parsing guess would be worse
+    than the drift it prevents.
+    """
+
+    EXAMPLE = Path(__file__).resolve().parents[1] / "archetypes.example.json"
+
+    def setUp(self):
+        super().setUp()
+        self.config = li_digest.load_config(self.EXAMPLE)
+
+    def test_the_shipped_example_still_loads(self):
+        self.assertTrue(self.config.archetypes)
+
+    def test_every_query_term_is_covered_by_its_match(self):
+        raw = json.loads(self.EXAMPLE.read_text(encoding="utf-8"))
+        for entry in raw["archetypes"]:
+            with self.subTest(archetype=entry["name"]):
+                pattern = re.compile(entry["match"], re.IGNORECASE)
+                uncovered = [t for t in _query_terms(entry["query"]) if not pattern.search(t)]
+                self.assertEqual(
+                    uncovered, [],
+                    f"archetype {entry['name']!r} fetches terms its match cannot label: "
+                    f"{uncovered}. Re-derive both fields together.")
+
+    def test_the_parity_check_detects_a_real_drift(self):
+        """The check is a heuristic and could be vacuously true. Proven
+        against a deliberately drifted pair."""
+        pattern = re.compile("platform engineer", re.IGNORECASE)
+        drifted = '"platform engineer" OR "site reliability engineer"'
+        uncovered = [t for t in _query_terms(drifted) if not pattern.search(t)]
+        self.assertEqual(uncovered, ["site reliability engineer"])
+
+    def test_terms_inside_a_quoted_phrase_are_not_checked_alone(self):
+        """'engineer' from inside a phrase must not be demanded as its own
+        term -- that would fail every realistic config."""
+        self.assertEqual(_query_terms('"platform engineer"'), ["platform engineer"])
+
+    def test_boolean_operators_are_not_treated_as_search_terms(self):
+        self.assertEqual(_query_terms('"a" OR "b" AND "c" NOT "d"'), ["a", "b", "c", "d"])
+
+
 if __name__ == "__main__":
     unittest.main()
