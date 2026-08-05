@@ -1,4 +1,4 @@
-.PHONY: build test test-race lint check check-deps deps-check security-scan ship-check release clean
+.PHONY: build test test-race lint check check-deps deps-check security-scan ship-check release clean test-skill
 
 BINARY := li-assist
 GO ?= go
@@ -64,8 +64,15 @@ security-scan:
 	@echo "== govulncheck (known CVEs in deps + stdlib) =="
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@latest ./...
 
+# Tests for the bundled skill scripts. Stdlib-only Python: no network, no
+# LinkedIn session, no third-party test runner. shellcheck covers the one
+# remaining bash script (the bootstrap, which must stay bash).
+test-skill:
+	shellcheck skill/scripts/ensure-installed.sh
+	python3 -m unittest discover -s skill/scripts/tests
+
 # Pre-commit checks (fast feedback for daily iteration).
-check: check-deps lint test
+check: check-deps lint test test-skill
 
 # Pre-release gate (slower, includes security scan + dep-currency report).
 # Run before `goreleaser release`.
