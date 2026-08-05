@@ -3,7 +3,8 @@
     "location": "Germany",
     "limit": 50,
     "exclude_title": ["recruiter"],
-    "exclude_company": []
+    "exclude_company": [],
+    "highlight": ["terraform", "kubernetes"]
   },
   "archetypes": [
     {

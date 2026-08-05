@@ -226,12 +226,25 @@ li-digest --json                 # pipeable JSON on stdout
 li-digest --only em,platform     # one or two lanes
 li-digest --window 30            # widen the lookback window in days (default: 14)
 li-digest --config ~/tmp/test-archetypes.json  # point at an alternate archetypes file
+li-digest --remote                # keep only rows marked (Remote); unmarked rows are excluded
 li-digest show 4431723620        # full description for one posting
 ```
 
 Exit codes: `0` clean, `1` one or more archetypes failed (the rest still printed), `2` config
 or usage error — including a dead session, a rate limit or blown daily cap, or the
 circuit breaker aborting after the first two archetypes fail in a row.
+
+Every non-seed run that sweeps every archetype cleanly (no `--only`, no archetype failure) also
+writes `.digest-lastrun` beside the config, and the next run uses it to add a `"Posted since your
+last digest"` bucket ahead of the usual In window / Undated / Older buckets: any posting whose
+`posted_at` is on or after that stamp is `fresh`, an honest answer to "did this genuinely appear
+since I last looked" instead of the cache-membership-driven `NEW` from `jobs sweep` (see the
+sweep/diff caveat in the main README). The comparison is date-granular and **inclusive**, so a job
+posted the same calendar date as your last run still shows as fresh on every later run made that
+same day — it is not "shows once, never again". A run with a failed archetype or narrowed with
+`--only` does not advance the stamp, since it never looked at everything. The very first real run
+(no marker yet) behaves exactly as before — no fresh bucket — and `--seed` never writes this
+marker, since seeding suppresses output and would make the first real run show nothing as fresh.
 
 Each archetype carries both a `query` (LinkedIn boolean, server-side) and a `match` (local
 regex). The `match` is what produces multi-archetype labels — a role can be `Platform, EM`.
@@ -242,6 +255,24 @@ The digest never passes `--enrich`: four archetypes with enrichment is four sear
 to 100 detail fetches, which is a bad daily habit against the rate limiter. Descriptions come
 from `li-digest show` on the few roles that earn a closer look — `jobs get` already returns the
 full description without any LLM.
+
+Optional `defaults.highlight` in `archetypes.json` is a list of plain terms — **not regexes** —
+that the operator knows are their own differentiators (e.g. `["terraform", "kubernetes"]`).
+Archetypes only know CV titles, so a strongly-matching role can otherwise be invisible in a long
+table; a matching title gets `"highlight": true` in `--json` and a `★ ` prefix in the table. Terms
+are `re.escape`d before being joined into one case-insensitive pattern, so a term containing regex
+metacharacters (`c++`, `.net`) is matched literally rather than breaking the tool. Absent, empty,
+or non-list `highlight` disables the feature with no error. The `★` prefix is U+2605, an
+ambiguous-width glyph in some terminal/font/CJK-locale combinations — the stdlib has no `wcwidth`,
+so table alignment there may drift by a column in rare setups; this is a known, low-impact
+cosmetic limitation, not a bug being tracked.
+
+`li-assist` has no server-side workplace filter (LinkedIn moved it behind SDUI), but every row's
+`location` already carries a `(Remote)`, `(Hybrid)`, or `(On-site)` marker, so `--remote` filters
+locally, for free, applied after enrichment and before rendering — in both table and `--json`
+output. It keeps only rows whose `location` contains `(Remote)` case-insensitively; **a row with
+no marker at all is excluded, not assumed remote.** If `--remote` removes every row, the stderr
+message says the filter emptied the result, not that nothing was found.
 
 ## Recipes
 

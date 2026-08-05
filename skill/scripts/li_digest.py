@@ -118,6 +118,7 @@ class Config:
     archetypes: tuple
     exclude_titles: tuple
     exclude_companies: tuple
+    highlight_pattern: re.Pattern
 
 
 def load_config(path) -> Config:
@@ -183,10 +184,28 @@ def load_config(path) -> Config:
     if duplicates:
         raise ConfigError(f"duplicate archetype name(s): {', '.join(duplicates)}")
 
+    # `highlight` names PLAIN terms, not regexes -- a user's differentiator
+    # (e.g. "c++", ".net") must not be able to break the tool just because it
+    # happens to contain a regex metacharacter. re.escape each term before
+    # joining, so the compiled pattern only ever matches literally. Absent,
+    # empty, or non-list `highlight` disables the feature cleanly rather than
+    # raising -- it is optional operator context, not part of the archetype
+    # contract the REQUIRED_FIELDS check above enforces.
+    highlight_terms = defaults.get("highlight")
+    highlight_pattern = None
+    if isinstance(highlight_terms, list):
+        escaped = [
+            re.escape(term) for term in highlight_terms
+            if isinstance(term, str) and term.strip()
+        ]
+        if escaped:
+            highlight_pattern = re.compile("|".join(escaped), re.IGNORECASE)
+
     return Config(
         archetypes=tuple(archetypes),
         exclude_titles=tuple(defaults.get("exclude_title") or ()),
         exclude_companies=tuple(defaults.get("exclude_company") or ()),
+        highlight_pattern=highlight_pattern,
     )
 
 
@@ -200,12 +219,19 @@ def cutoff_date(days: int, today=None) -> date:
     return (today or date.today()) - timedelta(days=days)
 
 
-def bucket_of(posted_at, cutoff: date) -> str:
-    """in | undated | old.
+def bucket_of(posted_at, cutoff: date, last_run: date = None) -> str:
+    """fresh | in | undated | old.
 
     LinkedIn sometimes returns no posting date at all, which arrives as the Go
     zero value. Those must land in their own bucket: a naive date filter would
     silently delete them.
+
+    `last_run` defaults to None so every pre-existing call site keeps working
+    unchanged. When it is set, a posting on or after it is "fresh" -- it
+    genuinely appeared since the operator last looked, as opposed to merely
+    being NEW because it churned out of `jobs sweep`'s cache-membership diff
+    (see the module docstring's `NEW` caveat). Undated postings stay undated
+    regardless of `last_run`: a missing date is not evidence of freshness.
     """
     if not posted_at or posted_at == ZERO_DATE:
         return "undated"
@@ -215,6 +241,8 @@ def bucket_of(posted_at, cutoff: date) -> str:
         return "undated"
     if posted.year <= 1:
         return "undated"
+    if last_run is not None and posted >= last_run:
+        return "fresh"
     return "in" if posted >= cutoff else "old"
 
 
@@ -344,6 +372,7 @@ def collect(config: Config, run=subprocess.run, log=None):
 
 
 BUCKET_HEADINGS = (
+    ("fresh", "Posted since your last digest"),
     ("in", "In window"),
     ("undated", "Undated (LinkedIn gave no posting date)"),
     ("old", "Older than the window"),
@@ -352,7 +381,7 @@ BUCKET_HEADINGS = (
 TABLE_HEADERS = ("Posted", "Archetypes", "Company", "Title", "Location", "Link")
 
 
-def enrich_rows(rows, config: Config, cutoff: date) -> list:
+def enrich_rows(rows, config: Config, cutoff: date, last_run: date = None) -> list:
     """Add archetypes / link / bucket to every row, in one pass.
 
     li-assist's own output shape is trusted for the array-of-objects
@@ -362,6 +391,14 @@ def enrich_rows(rows, config: Config, cutoff: date) -> list:
     `"company": "Acme"` (a bare string instead of {"name": ...}). Same
     defect class Task 6 fixed in cmd_show for `posting`/`company`: coerce
     rather than let a bad field type raise past main().
+
+    `last_run` defaults to None, matching bucket_of, so a caller that has no
+    last-run marker yet (first real run) gets today's behaviour unchanged.
+
+    `highlight` is a plain boolean rather than the matched term(s): archetype
+    matching already answers "which lane", `highlight` only answers "does
+    this one deserve a second look" -- and a plain bool is what --json
+    consumers and the star prefix both actually need.
     """
     return [
         dict(
@@ -372,7 +409,13 @@ def enrich_rows(rows, config: Config, cutoff: date) -> list:
                 config.archetypes,
             ),
             link=job_link(row.get("urn", "")),
-            bucket=bucket_of(row.get("posted_at"), cutoff),
+            bucket=bucket_of(row.get("posted_at"), cutoff, last_run),
+            highlight=bool(
+                config.highlight_pattern
+                and config.highlight_pattern.search(
+                    row.get("title") if isinstance(row.get("title"), str) else ""
+                )
+            ),
         )
         for row in rows
     ]
@@ -389,18 +432,23 @@ def _cells(row) -> tuple:
     posted_at = row.get("posted_at")
     posted_at = posted_at if isinstance(posted_at, str) else ""
     posted = "—" if row.get("bucket") == "undated" else (posted_at or "")[:10] or "—"
+    title = row.get("title", "")
+    # Widths are computed from these same cell strings (see render_table), so
+    # the star participates in width calculation for free -- no separate
+    # alignment logic needed.
+    title = f"★ {title}" if row.get("highlight") else title
     return (
         posted,
         row.get("archetypes", ""),
         company.get("name", ""),
-        row.get("title", ""),
+        title,
         row.get("location", ""),
         row.get("link", ""),
     )
 
 
 def render_table(rows) -> str:
-    """Three buckets, newest first, empty buckets suppressed."""
+    """Four buckets, newest first, empty buckets suppressed."""
     blocks = []
     for bucket, heading in BUCKET_HEADINGS:
         subset = [r for r in rows if r.get("bucket") == bucket]
@@ -421,6 +469,59 @@ def render_table(rows) -> str:
 def seed_marker(config_path) -> Path:
     """Marker lives beside the config it seeded, so test configs stay isolated."""
     return Path(config_path).parent / ".digest-seeded"
+
+
+def last_run_marker(config_path) -> Path:
+    """Marker lives beside the config, mirroring seed_marker. Records the
+    UTC timestamp of the last successful non-seed run, so bucket_of can tell
+    "genuinely posted since I last looked" (reliable, from posted_at) apart
+    from merely "not in the cache" (unreliable -- see the module docstring's
+    NEW caveat)."""
+    return Path(config_path).parent / ".digest-lastrun"
+
+
+def read_last_run(path, today: date = None) -> date:
+    """Tolerant reader for the last-run marker. Missing file, empty file,
+    malformed content, and a timestamp in the future all degrade to None
+    rather than raising -- a corrupted-into-the-future marker must not be
+    trusted as a cutoff (it would silently disable the fresh bucket forever,
+    which is a worse failure than just having no fresh bucket this once).
+
+    The marker is always written in UTC (see main()), so the future-guard
+    must compare against UTC too. Comparing against a LOCAL date() -- the
+    original bug here -- misjudges an evening run at a negative UTC offset:
+    a UTC-7 user at 17:00 local writes a UTC stamp dated tomorrow-LOCAL, so
+    every later run that same evening reads its own just-written marker
+    back, judges it "future", and silently disables the fresh bucket with
+    no message. `today` is the same optional test seam the rest of the
+    module already uses (cutoff_date, bucket_of); production leaves it None
+    and compares against the real UTC date.
+    """
+    try:
+        text = Path(path).read_text(encoding="utf-8").strip()
+    except (FileNotFoundError, IsADirectoryError, PermissionError):
+        return None
+    if not text:
+        return None
+    try:
+        stamp = datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return None
+    stamp_date = stamp.date()
+    if stamp_date > (today or datetime.now(timezone.utc).date()):
+        return None
+    return stamp_date
+
+
+def _is_remote(row) -> bool:
+    """True only when `location` carries an explicit "(Remote)" marker,
+    case-insensitively. li-assist has no server-side workplace filter
+    (LinkedIn moved it behind SDUI), but every row's `location` already
+    carries a (Remote) / (Hybrid) / (On-site) marker, so this filters for
+    free. A row with NO marker at all is not treated as remote -- absence of
+    a marker is not confirmation, it is just unknown."""
+    location = row.get("location")
+    return isinstance(location, str) and "(remote)" in location.lower()
 
 
 def select_archetypes(config: Config, only: str) -> Config:
@@ -482,6 +583,10 @@ def build_parser(out=None, err=None) -> argparse.ArgumentParser:
                         help=f"archetypes file (default: {CONFIG_DEFAULT})")
     parser.add_argument("--seed", action="store_true",
                         help="prime the cache silently so the next run is a true delta")
+    parser.add_argument("--remote", action="store_true",
+                        help="keep only rows whose location contains '(Remote)' "
+                             "(case-insensitive); rows with no workplace marker at "
+                             "all are excluded, not assumed remote")
     return parser
 
 
@@ -608,8 +713,20 @@ def main(argv=None, run=subprocess.run, out=None, err=None, today=None) -> int:
                 "cache not primed — run 'li-digest --seed' once first, then rerun"
             )
 
+        last_run = read_last_run(last_run_marker(args.config), today=today)
         rows, failed = collect(config, run=run, log=log)
-        rows = enrich_rows(rows, config, cutoff_date(args.window, today))
+        rows = enrich_rows(rows, config, cutoff_date(args.window, today), last_run)
+
+        # Applied after enrichment, before rendering, to both table and
+        # --json output. li-assist has no server-side workplace filter
+        # (LinkedIn moved it to SDUI), but `location` already carries the
+        # marker, so this is free. Tracked separately from the render
+        # branch below so the empty-result message can tell "the filter
+        # removed everything" apart from "there was nothing to begin with".
+        pre_filter_count = len(rows)
+        if args.remote:
+            rows = [r for r in rows if _is_remote(r)]
+        remote_filtered_to_empty = bool(args.remote and pre_filter_count and not rows)
 
         if args.as_json:
             # [] in --json mode, even on the common "nothing new" outcome,
@@ -618,6 +735,14 @@ def main(argv=None, run=subprocess.run, out=None, err=None, today=None) -> int:
             print(json.dumps(rows, indent=2), file=out)
         elif rows:
             print(render_table(rows), file=out)
+        elif remote_filtered_to_empty:
+            # Distinct from the "nothing new" message below: there WERE
+            # results, --remote removed all of them. Saying "nothing new"
+            # here would imply an empty search, not a filtered one.
+            log(
+                f"li-digest: --remote filter left nothing to show "
+                f"({pre_filter_count} result(s) before filtering)"
+            )
         else:
             # render_table([]) == "" -- printing that put a bare "\n" on
             # stdout with no explanation on stderr, indistinguishable from
@@ -625,6 +750,40 @@ def main(argv=None, run=subprocess.run, out=None, err=None, today=None) -> int:
             # so on stderr instead and leave stdout genuinely empty.
             plural = "" if args.window == 1 else "s"
             log(f"li-digest: nothing new in the last {args.window} day{plural}")
+
+        # Written AFTER rendering, deliberately: a crash mid-render must not
+        # advance the stamp, or the next run would silently believe today's
+        # (unprinted) postings were already seen. `today` stands in for
+        # datetime.now() when a test injects it, same seam cutoff_date uses.
+        #
+        # Only written on a CLEAN, FULL run: `failed` means at least one
+        # archetype's diff for this run is unreliable, and `--only` means
+        # whole lanes were never swept at all. Advancing a GLOBAL stamp on
+        # either would misbucket that lane's next genuinely-new postings as
+        # "in" rather than "fresh" once it (or the rest) actually runs. This
+        # is the opposite of --seed, where writing through a partial
+        # failure IS correct -- re-seeding costs real calls, so refusing
+        # would force burning more of them on lanes that already primed
+        # cleanly. There is no such cost here: the stamp just waits for a
+        # clean run.
+        if not failed and not args.only:
+            lastrun_path = last_run_marker(args.config)
+            stamp = (
+                datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
+                if today else datetime.now(timezone.utc)
+            )
+            try:
+                lastrun_path.parent.mkdir(parents=True, exist_ok=True)
+                lastrun_path.write_text(
+                    stamp.strftime("%Y-%m-%dT%H:%M:%SZ"), encoding="utf-8"
+                )
+            except OSError as exc:
+                # A missing marker already degrades gracefully (no fresh
+                # bucket next time) -- so report and move on rather than
+                # letting an unwritable config dir turn an otherwise
+                # successful run into an uncaught traceback AFTER the table
+                # already printed, which would break the 0/1/2 contract.
+                log(f"li-digest: could not update the last-run marker: {exc}")
 
         if failed:
             log(f"li-digest: {len(failed)} archetype(s) failed: {', '.join(failed)}")

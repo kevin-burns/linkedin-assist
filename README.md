@@ -224,14 +224,24 @@ li-digest                     # the daily table
 li-digest --window 3          # narrower window; see the caveat above
 li-digest --only em,platform  # one or two lanes — costs one call per named lane, not the full set
 li-digest --json              # pipeable array on stdout
+li-digest --remote            # keep only rows marked (Remote); unmarked rows are excluded
 li-digest show 4431723620     # one posting's full description
 ```
 
 `show` uses `jobs get` **without** `--enrich`: the description is already in the payload, so reading one posting costs a single call and no LLM. The digest never enriches either — five archetypes with enrichment would be five searches plus up to 100 detail fetches, which is a bad daily habit against the rate limiter.
 
+**Highlighting your own differentiators.** Archetypes match job *titles* — they know nothing about what actually makes you a strong candidate for one. `defaults.highlight` in `archetypes.json` names plain terms (`["terraform", "kubernetes"]`, not regexes) that do: a title matching one gets `"highlight": true` in `--json` and a `★ ` prefix in the table, so it isn't lost in a long list of archetype-only matches. Terms are escaped before compiling, so a term with regex metacharacters (`c++`, `.net`) matches literally instead of breaking the tool. Absent, empty, or non-list `highlight` is a clean no-op.
+
+**Filtering to remote-only.** `li-assist` has no server-side workplace filter — LinkedIn moved that behind SDUI — but every row's `location` already carries a `(Remote)`, `(Hybrid)`, or `(On-site)` marker, so `li-digest --remote` filters locally, for free, applied after enrichment and before rendering, in both table and `--json` mode. It keeps only rows whose `location` contains `(Remote)` case-insensitively; **a row with no marker at all is excluded, not assumed remote.** If `--remote` filters away everything, the stderr message says so explicitly rather than reporting a plain "nothing new".
+
 Exit codes: `0` clean, `1` one or more archetypes failed and the rest still printed, `2` a config or usage error — including a dead session, a rate limit, a daily cap, or two consecutive archetype failures, any of which abort the whole run rather than spending the remaining calls.
 
 The `--seed` step exists because the first run against an empty cache would report every result as new. Seed once, silently, and the next run is a genuine delta.
+
+**The honest answer to the NEW caveat above:** every non-seed run that sweeps *every* archetype cleanly (no `--only`, no archetype failure) writes `.digest-lastrun` beside the archetypes file, and the *next* run uses that stamp to add a `Posted since your last digest` bucket — anything with `posted_at` on or after the stamp, ahead of the usual In window / Undated / Older buckets. That's `posted_at`-based, not cache-membership-based, so it doesn't inherit the sweep/diff churn: freshness is decided by when a job was actually posted, not by whether it happens to be missing from the cache this time. The comparison is date-granular and **inclusive**, though, so it is not "shows once and never again" — a job posted on the same calendar date as your last run still shows as fresh on every later run made *that same day*; it stops being fresh only once a run's stamp moves past that date. A run with a failed archetype or narrowed with `--only` does **not** advance the stamp — a partial run has no business promising "I looked at everything". The first real run (no marker yet) has no fresh bucket, same as today; `--seed` never writes the marker, since seeding prints no output and would leave the following run's fresh bucket showing nothing.
+
+
+---
 
 ### Warm intros (offline)
 

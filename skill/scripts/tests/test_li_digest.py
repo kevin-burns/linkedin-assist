@@ -1,5 +1,6 @@
 """Stdlib-only tests for li_digest. No network, no LinkedIn session."""
 
+import datetime as _datetime_module
 import json
 import re
 import sys
@@ -7,10 +8,37 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import li_digest  # noqa: E402
+
+
+class _FixedUTCNow(_datetime_module.datetime):
+    """Stands in for li_digest's `datetime` so `datetime.now(timezone.utc)`
+    returns a fixed instant, deterministically, regardless of the real
+    wall clock (must still pass in 2030). Represents an evening run at a
+    negative UTC offset: UTC is already past midnight into the next day."""
+
+    _FIXED_UTC_NOW = _datetime_module.datetime(
+        2026, 8, 5, 0, 10, 0, tzinfo=_datetime_module.timezone.utc
+    )
+
+    @classmethod
+    def now(cls, tz=None):
+        return cls._FIXED_UTC_NOW
+
+
+class _FixedLocalToday(_datetime_module.date):
+    """Stands in for li_digest's `date` so `date.today()` returns a fixed
+    LOCAL date one day behind `_FixedUTCNow` -- the same negative-UTC-offset
+    evening this whole bug is about. Only a REVERTED read_last_run (falling
+    back to `date.today()` instead of the UTC instant) ever consults this."""
+
+    @classmethod
+    def today(cls):
+        return cls(2026, 8, 4)
 
 
 GOOD_CONFIG = {
@@ -129,6 +157,108 @@ class TestLoadConfig(ConfigTempDir):
         self.assertEqual(len(cfg.archetypes), 5)
 
 
+class TestHighlight(ConfigTempDir):
+    """defaults.highlight: plain terms (not regexes) that star a matching
+    row so a strongly-matching operator differentiator isn't invisible in a
+    long table of archetype-only matches."""
+
+    def config_with_highlight(self, terms):
+        data = json.loads(json.dumps(GOOD_CONFIG))
+        data["defaults"]["highlight"] = terms
+        return li_digest.load_config(self.write_config(data))
+
+    def test_highlight_pattern_is_none_when_absent(self):
+        cfg = li_digest.load_config(self.write_config(GOOD_CONFIG))
+        self.assertIsNone(cfg.highlight_pattern)
+
+    def test_highlight_pattern_is_none_when_empty_list(self):
+        self.assertIsNone(self.config_with_highlight([]).highlight_pattern)
+
+    def test_highlight_pattern_is_none_when_not_a_list(self):
+        self.assertIsNone(self.config_with_highlight("terraform").highlight_pattern)
+
+    def test_highlight_pattern_matches_case_insensitively(self):
+        cfg = self.config_with_highlight(["terraform"])
+        self.assertTrue(cfg.highlight_pattern.search("Senior TERRAFORM Engineer"))
+
+    def test_metacharacter_terms_are_literal_and_do_not_raise(self):
+        """"c++" as a raw regex is invalid ("multiple repeat") and would
+        raise re.error at compile time; escaped, it is a literal three-char
+        match instead."""
+        cfg = self.config_with_highlight(["c++", ".net"])
+        self.assertIsNotNone(cfg.highlight_pattern)
+        rows = li_digest.enrich_rows(
+            [job("1", "Senior C++ Developer"), job("2", "Xnet Support"),
+             job("3", ".NET Core Developer")],
+            cfg, date(2026, 7, 21),
+        )
+        by_id = {r["urn"].rsplit(":", 1)[-1]: r["highlight"] for r in rows}
+        self.assertTrue(by_id["1"])
+        self.assertFalse(by_id["2"], "unescaped '.' would wrongly match 'Xnet'")
+        self.assertTrue(by_id["3"])
+
+    def test_enrich_rows_sets_highlight_true_and_false(self):
+        cfg = self.config_with_highlight(["terraform"])
+        rows = li_digest.enrich_rows(
+            [job("1", "Terraform Engineer"), job("2", "Support Analyst")],
+            cfg, date(2026, 7, 21),
+        )
+        by_id = {r["urn"].rsplit(":", 1)[-1]: r["highlight"] for r in rows}
+        self.assertTrue(by_id["1"])
+        self.assertFalse(by_id["2"])
+
+    def test_missing_empty_non_list_highlight_is_a_clean_noop(self):
+        for terms in (None, [], "terraform", 42):
+            with self.subTest(terms=terms):
+                data = json.loads(json.dumps(GOOD_CONFIG))
+                if terms is not None:
+                    data["defaults"]["highlight"] = terms
+                cfg = li_digest.load_config(self.write_config(data, f"cfg-{terms}.json"))
+                rows = li_digest.enrich_rows(
+                    [job("1", "Terraform Engineer")], cfg, date(2026, 7, 21)
+                )
+                self.assertFalse(rows[0]["highlight"])
+
+    def test_non_string_title_does_not_crash_highlighting(self):
+        cfg = self.config_with_highlight(["terraform"])
+        rows = li_digest.enrich_rows(
+            [{"urn": "urn:li:fsd_jobPosting:9", "title": 42, "location": "Remote",
+              "company": "Acme", "posted_at": "2026-08-04T00:00:00Z"}],
+            cfg, date(2026, 7, 21),
+        )
+        self.assertFalse(rows[0]["highlight"])
+
+    def test_json_output_carries_the_highlight_boolean(self):
+        cfg = self.config_with_highlight(["terraform"])
+        rows = li_digest.enrich_rows(
+            [job("1", "Terraform Engineer")], cfg, date(2026, 7, 21)
+        )
+        self.assertIs(json.loads(json.dumps(rows))[0]["highlight"], True)
+
+    def test_table_stars_a_highlighted_title(self):
+        cfg = self.config_with_highlight(["terraform"])
+        rows = li_digest.enrich_rows(
+            [job("1", "Terraform Engineer")], cfg, date(2026, 7, 21)
+        )
+        table = li_digest.render_table(rows)
+        self.assertIn("★ Terraform Engineer", table)
+
+    def test_table_alignment_holds_with_mixed_starred_rows(self):
+        cfg = self.config_with_highlight(["terraform"])
+        rows = li_digest.enrich_rows(
+            [job("1", "Terraform Engineer", "Acme"), job("2", "Support Analyst", "Acme")],
+            cfg, date(2026, 7, 21),
+        )
+        table = li_digest.render_table(rows)
+        data_lines = [
+            line for line in table.splitlines()
+            if "Terraform Engineer" in line or "Support Analyst" in line
+        ]
+        self.assertEqual(len(data_lines), 2)
+        positions = {line.index("Germany") for line in data_lines}
+        self.assertEqual(len(positions), 1, "Location column must still line up")
+
+
 class TestPureHelpers(ConfigTempDir):
 
     def archetypes(self):
@@ -167,6 +297,150 @@ class TestPureHelpers(ConfigTempDir):
         self.assertEqual(li_digest.bucket_of("2026-08-04T00:00:00Z", cutoff), "in")
         self.assertEqual(li_digest.bucket_of("2026-07-21T00:00:00Z", cutoff), "in")
         self.assertEqual(li_digest.bucket_of("2026-07-20T23:59:59Z", cutoff), "old")
+
+    def test_bucket_of_last_run_defaults_to_none_and_is_unaffected(self):
+        """Every pre-existing call site (two positional args) must keep
+        working unchanged."""
+        cutoff = date(2026, 7, 21)
+        self.assertEqual(li_digest.bucket_of("2026-08-04T00:00:00Z", cutoff), "in")
+
+    def test_bucket_of_marks_fresh_when_posted_on_or_after_last_run(self):
+        cutoff = date(2026, 7, 21)
+        last_run = date(2026, 8, 3)
+        self.assertEqual(
+            li_digest.bucket_of("2026-08-04T00:00:00Z", cutoff, last_run), "fresh"
+        )
+        self.assertEqual(
+            li_digest.bucket_of("2026-08-03T00:00:00Z", cutoff, last_run), "fresh"
+        )
+
+    def test_bucket_of_falls_back_to_in_old_when_posted_before_last_run(self):
+        cutoff = date(2026, 7, 21)
+        last_run = date(2026, 8, 3)
+        self.assertEqual(
+            li_digest.bucket_of("2026-08-02T00:00:00Z", cutoff, last_run), "in"
+        )
+        self.assertEqual(
+            li_digest.bucket_of("2026-07-01T00:00:00Z", cutoff, last_run), "old"
+        )
+
+    def test_bucket_of_undated_stays_undated_even_with_a_last_run(self):
+        cutoff = date(2026, 7, 21)
+        last_run = date(2026, 8, 3)
+        self.assertEqual(
+            li_digest.bucket_of(li_digest.ZERO_DATE, cutoff, last_run), "undated"
+        )
+
+    def test_last_run_marker_mirrors_seed_marker(self):
+        config_path = self.tmp / "archetypes.json"
+        self.assertEqual(
+            li_digest.last_run_marker(config_path), self.tmp / ".digest-lastrun"
+        )
+        self.assertEqual(
+            li_digest.last_run_marker(config_path).parent,
+            li_digest.seed_marker(config_path).parent,
+        )
+
+    def test_read_last_run_missing_file_is_none(self):
+        self.assertIsNone(li_digest.read_last_run(self.tmp / "nope"))
+
+    def test_read_last_run_empty_file_is_none(self):
+        path = self.tmp / "empty"
+        path.write_text("", encoding="utf-8")
+        self.assertIsNone(li_digest.read_last_run(path))
+
+    def test_read_last_run_malformed_content_is_none(self):
+        path = self.tmp / "junk"
+        path.write_text("not a timestamp", encoding="utf-8")
+        self.assertIsNone(li_digest.read_last_run(path))
+
+    def test_read_last_run_future_timestamp_is_none(self):
+        """A future timestamp must not silently be treated as a valid
+        cutoff -- degrade to None like any other malformed marker."""
+        path = self.tmp / "future"
+        path.write_text("9999-01-01T00:00:00Z", encoding="utf-8")
+        self.assertIsNone(li_digest.read_last_run(path))
+
+    def test_read_last_run_valid_timestamp_returns_its_date(self):
+        path = self.tmp / "good"
+        path.write_text("2026-08-04T09:30:00Z", encoding="utf-8")
+        self.assertEqual(li_digest.read_last_run(path), date(2026, 8, 4))
+
+    def test_read_last_run_tomorrow_relative_to_injected_today_is_none(self):
+        """The near-future boundary, not just the absurd `9999` case: a
+        stamp one day ahead of `today` must still degrade to None.
+
+        This only exercises the `today`-KWARG seam, not the UTC-vs-local
+        default itself -- it is clock-dependent by construction (a
+        hard-coded 2026-08-04/05 pair) and would still pass even if the
+        production default silently reverted from UTC to local `date.today()`.
+        See test_read_last_run_default_uses_utc_now_not_local_today below
+        for the test that actually pins the UTC default, deterministically,
+        with no reliance on the real clock."""
+        path = self.tmp / "tomorrow"
+        path.write_text("2026-08-05T00:00:00Z", encoding="utf-8")
+        self.assertIsNone(li_digest.read_last_run(path, today=date(2026, 8, 4)))
+
+    def test_read_last_run_today_relative_to_injected_today_is_valid(self):
+        """The boundary's other side: a stamp dated exactly `today` (the
+        ordinary case -- written earlier today, read back later today) must
+        NOT be treated as future."""
+        path = self.tmp / "same-day"
+        path.write_text("2026-08-04T23:00:00Z", encoding="utf-8")
+        self.assertEqual(
+            li_digest.read_last_run(path, today=date(2026, 8, 4)), date(2026, 8, 4)
+        )
+
+    def test_read_last_run_default_uses_utc_now_not_local_today(self):
+        """Pins the actual UTC-vs-local fix, distinct from the `today`-kwarg
+        boundary tests above (those only exercise the kwarg seam and are
+        satisfied whether the fallback is UTC or local). Called with NO
+        `today` argument -- the real production call shape -- so this is
+        the one that must fail if `today or datetime.now(timezone.utc)` is
+        ever reverted to `today or date.today()`.
+
+        `datetime.now(timezone.utc)` is pinned to 2026-08-05T00:10:00Z;
+        `date.today()` is pinned to the LOCAL 2026-08-04 a REVERTED
+        implementation would fall back to -- one day behind, the
+        negative-UTC-offset evening scenario from the bug report. Neither
+        pin touches the real clock, so this holds in 2030 too.
+        """
+        with mock.patch("li_digest.datetime", _FixedUTCNow), \
+             mock.patch("li_digest.date", _FixedLocalToday):
+            # Dated exactly at the (mocked) UTC "now" date: valid under the
+            # correct UTC default, but "future" under a reverted LOCAL
+            # default (2026-08-05 > 2026-08-04) -- this is the case that
+            # actually discriminates the fix from the bug.
+            utc_today_marker = self.tmp / "utc-today"
+            utc_today_marker.write_text("2026-08-05T00:05:00Z", encoding="utf-8")
+            self.assertEqual(
+                li_digest.read_last_run(utc_today_marker), date(2026, 8, 5)
+            )
+
+            # Dated one day past even the mocked UTC "now": future under
+            # either default. Doesn't discriminate the fix from the bug on
+            # its own, but confirms the ordinary future-guard still holds
+            # under the patched clock.
+            utc_tomorrow_marker = self.tmp / "utc-tomorrow"
+            utc_tomorrow_marker.write_text("2026-08-06T00:05:00Z", encoding="utf-8")
+            self.assertIsNone(li_digest.read_last_run(utc_tomorrow_marker))
+
+    def test_bucket_of_fresh_wins_over_out_of_window(self):
+        """Documented, not changed: the fresh check runs before the cutoff
+        check, so when `last_run` is OLDER than the window (the gap since
+        the operator's last run exceeds --window), a posting outside the
+        window can still be promoted to "fresh" if it's on/after last_run.
+        No row is lost either way -- only which bucket it lands in -- so
+        this interaction is intentional. Untested interactions are this
+        project's entire defect history, hence pinning it here."""
+        cutoff = date(2026, 7, 21)     # e.g. --window 14 from "today" 2026-08-04
+        last_run = date(2026, 7, 10)   # last run was 25 days ago -- older than the window
+        posted = date(2026, 7, 15)     # outside the window, but on/after last_run
+        self.assertLess(posted, cutoff, "sanity: this WOULD be 'old' without last_run")
+        self.assertEqual(
+            li_digest.bucket_of(f"{posted.isoformat()}T00:00:00Z", cutoff, last_run),
+            "fresh",
+        )
 
     def test_labels_every_matching_archetype(self):
         self.assertEqual(
@@ -230,9 +504,10 @@ class FakeRunner:
         return self.default
 
 
-def job(urn, title, company="Acme", posted="2026-08-04T00:00:00Z"):
+def job(urn, title, company="Acme", posted="2026-08-04T00:00:00Z",
+        location="Germany (Remote)"):
     return {"urn": f"urn:li:fsd_jobPosting:{urn}", "title": title,
-            "location": "Germany (Remote)", "company": {"urn": "", "name": company},
+            "location": location, "company": {"urn": "", "name": company},
             "posted_at": posted}
 
 
@@ -507,6 +782,17 @@ class TestRendering(ConfigTempDir):
         table = li_digest.render_table(self.rows)
         self.assertNotIn("0001-01-01", table)
 
+    def test_fresh_bucket_renders_first_with_its_own_heading(self):
+        fresh_rows = li_digest.enrich_rows(
+            [job("666", "Fresh Platform Role", "BrandNew", "2026-08-04T00:00:00Z")],
+            self.cfg, date(2026, 7, 21), date(2026, 8, 4),
+        )
+        table = li_digest.render_table(fresh_rows + self.rows)
+        self.assertIn("Posted since your last digest", table)
+        self.assertLess(
+            table.index("Posted since your last digest"), table.index("In window")
+        )
+
 
 import io  # noqa: E402  (grouped with the CLI tests for clarity)
 
@@ -671,6 +957,257 @@ class TestCli(ConfigTempDir):
         code = self.run_cli("--config", str(self.path), "--only", ",,")
         self.assertEqual(code, 2)
         self.assertIn("--only", self.err.getvalue())
+
+    def test_seed_does_not_write_the_last_run_marker(self):
+        """Seeding suppresses output, so advancing the last-run stamp there
+        would make the first REAL run show nothing as fresh."""
+        self.seed()
+        self.assertFalse(li_digest.last_run_marker(self.path).exists())
+
+    def test_first_real_run_has_no_fresh_bucket_and_writes_the_marker(self):
+        self.seed()
+        self.assertFalse(li_digest.last_run_marker(self.path).exists())
+        code = self.run_cli("--config", str(self.path), "--json")
+        self.assertEqual(code, 0)
+        rows = json.loads(self.out.getvalue())
+        self.assertEqual([r["bucket"] for r in rows].count("fresh"), 0)
+        self.assertTrue(li_digest.last_run_marker(self.path).exists())
+
+    def test_second_run_buckets_a_newer_posting_as_fresh(self):
+        """Fixture jobs are dated 2026-08-04 (urn 111) and 2026-08-03 (urn
+        222). run_cli always injects today=2026-08-04, so the first run's
+        last-run stamp lands on 2026-08-04 too -- job 111 (posted the same
+        day) must come back fresh on the second run; job 222 (posted the
+        day before) must fall back to the ordinary in-window bucket."""
+        self.seed()
+        self.run_cli("--config", str(self.path), "--json")  # first real run
+        self.out = io.StringIO()
+        self.run_cli("--config", str(self.path), "--json")  # second real run
+        rows = {r["urn"].rsplit(":", 1)[-1]: r for r in json.loads(self.out.getvalue())}
+        self.assertEqual(rows["111"]["bucket"], "fresh")
+        self.assertEqual(rows["222"]["bucket"], "in")
+
+    def test_malformed_last_run_marker_degrades_to_no_fresh_bucket(self):
+        self.seed()
+        self.run_cli("--config", str(self.path), "--json")  # writes a valid marker
+        li_digest.last_run_marker(self.path).write_text("garbage", encoding="utf-8")
+        self.out = io.StringIO()
+        self.run_cli("--config", str(self.path), "--json")
+        rows = {r["urn"].rsplit(":", 1)[-1]: r for r in json.loads(self.out.getvalue())}
+        self.assertEqual(rows["111"]["bucket"], "in")
+
+    def test_future_last_run_marker_degrades_to_no_fresh_bucket(self):
+        self.seed()
+        self.run_cli("--config", str(self.path), "--json")  # writes a valid marker
+        li_digest.last_run_marker(self.path).write_text(
+            "9999-01-01T00:00:00Z", encoding="utf-8"
+        )
+        self.out = io.StringIO()
+        self.run_cli("--config", str(self.path), "--json")
+        rows = {r["urn"].rsplit(":", 1)[-1]: r for r in json.loads(self.out.getvalue())}
+        self.assertEqual(rows["111"]["bucket"], "in")
+
+    def test_last_run_marker_is_written_after_output_not_before(self):
+        """A crash mid-render must not leave the stamp advanced -- simulate
+        that crash by making the output stream raise on write()."""
+        self.seed()
+
+        class BoomOut:
+            def write(self, _s):
+                raise RuntimeError("boom mid-render")
+
+        with self.assertRaises(RuntimeError):
+            li_digest.main(
+                ["--config", str(self.path)],
+                run=self.runner, out=BoomOut(), err=self.err,
+                today=date(2026, 8, 4),
+            )
+        self.assertFalse(li_digest.last_run_marker(self.path).exists())
+
+    def test_marker_write_failure_does_not_crash_a_successful_run(self):
+        """An unwritable marker path (read-only/full config dir, in the
+        real world) must not turn an otherwise successful run into an
+        uncaught traceback AFTER the table already printed -- that breaks
+        the 0/1/2 exit-code contract on the ordinary daily path. A missing
+        marker already degrades gracefully (no fresh bucket next time); an
+        unwritable one must too, just with a note on stderr."""
+        self.seed()
+        li_digest.last_run_marker(self.path).mkdir()  # write_text -> IsADirectoryError
+        code = self.run_cli("--config", str(self.path), "--json")
+        self.assertEqual(code, 0)
+        self.assertIn("could not update the last-run marker", self.err.getvalue())
+
+    def test_marker_is_unchanged_after_a_run_that_exits_1(self):
+        """A run where an archetype failed must not advance the GLOBAL
+        last-run stamp: that lane's diff for this run is unreliable input,
+        and a partially-failed run has no business promising "I looked at
+        everything". Proven by seeding a SENTINEL into the marker and
+        checking it survives untouched -- writing the SAME valid stamp
+        twice would look identical and prove nothing."""
+        self.seed()
+        self.run_cli("--config", str(self.path), "--json")  # writes a valid marker
+        li_digest.last_run_marker(self.path).write_text("SENTINEL", encoding="utf-8")
+        failing_runner = FakeRunner(by_query={
+            "platform engineer": FakeProc("", "boom", 1),
+            "engineering manager": FakeProc(json.dumps(EM_JOBS)),
+        })
+        self.out = io.StringIO()
+        code = self.run_cli("--config", str(self.path), "--json", runner=failing_runner)
+        self.assertEqual(code, 1)
+        self.assertEqual(
+            li_digest.last_run_marker(self.path).read_text(encoding="utf-8"), "SENTINEL"
+        )
+
+    def test_marker_is_unchanged_after_an_only_run(self):
+        """A narrowed --only run never swept the untouched lane(s) at all,
+        so it must not advance a GLOBAL last-run stamp on their behalf."""
+        self.seed()
+        self.run_cli("--config", str(self.path), "--json")  # writes a valid marker
+        li_digest.last_run_marker(self.path).write_text("SENTINEL", encoding="utf-8")
+        self.out = io.StringIO()
+        code = self.run_cli("--config", str(self.path), "--only", "em", "--json")
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            li_digest.last_run_marker(self.path).read_text(encoding="utf-8"), "SENTINEL"
+        )
+
+    def test_main_threads_its_today_through_to_read_last_run(self):
+        """Asserts the WIRING, not just an outcome: read_last_run's `today`
+        kwarg is useless if main() never passes it (the other half of the
+        UTC fix -- read_last_run alone can't prove main() calls it
+        correctly). Patches read_last_run itself and checks the exact
+        kwarg arrives. The runner returns nothing swept, so the patched
+        function's default MagicMock return value never has to survive a
+        real bucket_of comparison."""
+        empty_runner = FakeRunner(default=FakeProc("[]"))
+        self.run_cli("--config", str(self.path), "--seed", runner=empty_runner)
+        self.out = io.StringIO()
+        with mock.patch("li_digest.read_last_run") as mock_read_last_run:
+            mock_read_last_run.return_value = None
+            code = self.run_cli("--config", str(self.path), "--json", runner=empty_runner)
+        self.assertEqual(code, 0)
+        mock_read_last_run.assert_called_once()
+        _, kwargs = mock_read_last_run.call_args
+        self.assertEqual(kwargs.get("today"), date(2026, 8, 4))
+
+
+class TestRemoteFilter(ConfigTempDir):
+    """li-assist has no server-side workplace filter (LinkedIn moved it to
+    SDUI), but every row's `location` already carries a (Remote) / (Hybrid)
+    / (On-site) marker -- so --remote filters locally, for free."""
+
+    def setUp(self):
+        super().setUp()
+        self.path = self.write_config(GOOD_CONFIG)
+        self.out = io.StringIO()
+        self.err = io.StringIO()
+
+    def run_cli(self, *argv, runner):
+        return li_digest.main(
+            list(argv), run=runner, out=self.out, err=self.err, today=date(2026, 8, 4),
+        )
+
+    def seed(self, runner):
+        self.run_cli("--config", str(self.path), "--seed", runner=runner)
+        self.out = io.StringIO()
+
+    def runner_with(self, jobs):
+        return FakeRunner(by_query={
+            "platform engineer": FakeProc(json.dumps(jobs)),
+            "engineering manager": FakeProc(json.dumps([])),
+        })
+
+    def test_remote_rows_are_kept_and_others_dropped(self):
+        jobs = [
+            job("1", "Remote Role", location="Germany (Remote)"),
+            job("2", "Hybrid Role", location="Germany (Hybrid)"),
+            job("3", "Onsite Role", location="Germany (On-site)"),
+            job("4", "Unmarked Role", location="Germany"),
+        ]
+        runner = self.runner_with(jobs)
+        self.seed(runner)
+        code = self.run_cli("--config", str(self.path), "--remote", "--json", runner=runner)
+        self.assertEqual(code, 0)
+        rows = json.loads(self.out.getvalue())
+        self.assertEqual([r["title"] for r in rows], ["Remote Role"])
+
+    def test_undated_remote_row_survives_the_filter_and_stays_undated(self):
+        """--remote is the one place this feature is licensed to drop
+        rows, and undated postings must never be silently dropped -- prove
+        the two rules coexist: an undated row WITH the marker survives and
+        keeps its "undated" bucket (not promoted to "in" or anything else
+        just because it passed the filter)."""
+        jobs = [job("1", "Undated Remote Role", posted=li_digest.ZERO_DATE,
+                     location="Germany (Remote)")]
+        runner = self.runner_with(jobs)
+        self.seed(runner)
+        self.run_cli("--config", str(self.path), "--remote", "--json", runner=runner)
+        rows = json.loads(self.out.getvalue())
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["bucket"], "undated")
+
+    def test_undated_unmarked_row_is_dropped_by_the_filter(self):
+        """The other half of the same rule: an undated row is not exempt
+        from --remote just because it's undated -- with no (Remote) marker
+        it is excluded like any other unmarked row."""
+        jobs = [job("1", "Undated Unmarked Role", posted=li_digest.ZERO_DATE,
+                     location="Germany")]
+        runner = self.runner_with(jobs)
+        self.seed(runner)
+        self.run_cli("--config", str(self.path), "--remote", "--json", runner=runner)
+        self.assertEqual(json.loads(self.out.getvalue()), [])
+
+    def test_matching_is_case_insensitive(self):
+        jobs = [job("1", "Remote Role", location="Germany (REMOTE)")]
+        runner = self.runner_with(jobs)
+        self.seed(runner)
+        self.run_cli("--config", str(self.path), "--remote", "--json", runner=runner)
+        rows = json.loads(self.out.getvalue())
+        self.assertEqual(len(rows), 1)
+
+    def test_remote_filter_applies_to_table_mode_too(self):
+        jobs = [job("1", "Remote Role", location="Germany (Remote)"),
+                job("2", "Hybrid Role", location="Germany (Hybrid)")]
+        runner = self.runner_with(jobs)
+        self.seed(runner)
+        self.run_cli("--config", str(self.path), "--remote", runner=runner)
+        table = self.out.getvalue()
+        self.assertIn("Remote Role", table)
+        self.assertNotIn("Hybrid Role", table)
+
+    def test_unmarked_locations_are_excluded_not_assumed_remote(self):
+        jobs = [job("1", "Unmarked Role", location="Germany")]
+        runner = self.runner_with(jobs)
+        self.seed(runner)
+        self.run_cli("--config", str(self.path), "--remote", "--json", runner=runner)
+        self.assertEqual(json.loads(self.out.getvalue()), [])
+
+    def test_empty_after_filter_names_the_filter_not_a_plain_nothing_new(self):
+        jobs = [job("1", "Hybrid Role", location="Germany (Hybrid)")]
+        runner = self.runner_with(jobs)
+        self.seed(runner)
+        code = self.run_cli("--config", str(self.path), "--remote", runner=runner)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.out.getvalue(), "")
+        self.assertIn("--remote", self.err.getvalue())
+        self.assertNotIn("nothing new in the last", self.err.getvalue())
+
+    def test_empty_after_filter_in_json_mode_is_still_an_empty_array(self):
+        jobs = [job("1", "Hybrid Role", location="Germany (Hybrid)")]
+        runner = self.runner_with(jobs)
+        self.seed(runner)
+        code = self.run_cli("--config", str(self.path), "--remote", "--json", runner=runner)
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(self.out.getvalue()), [])
+
+    def test_genuinely_nothing_new_keeps_the_ordinary_message_even_with_remote(self):
+        """--remote must not claim credit for an empty result it didn't
+        cause -- when there was nothing to filter, say so plainly."""
+        runner = FakeRunner(default=FakeProc("[]"))
+        self.seed(runner)
+        code = self.run_cli("--config", str(self.path), "--remote", runner=runner)
+        self.assertEqual(code, 0)
+        self.assertIn("nothing new in the last", self.err.getvalue())
 
 
 DETAIL = {
