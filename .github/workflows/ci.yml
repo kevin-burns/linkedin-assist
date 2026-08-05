@@ -52,7 +52,7 @@ jobs:
           cache: true
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9
         with:
           # Pinned to match the prek hook (.pre-commit-config.yaml). Bump both
           # together; `latest` here would silently drift from local.
