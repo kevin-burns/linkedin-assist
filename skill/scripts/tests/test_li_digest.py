@@ -934,9 +934,27 @@ class TestCli(ConfigTempDir):
         self.assertIn("auth login", self.err.getvalue())
 
     def test_missing_config_exits_2(self):
+        """The wording changed when the missing-config path started
+        explaining how to create the file; the contract did not. Asserted
+        on the invariants -- exit 2, the path named, stdout untouched --
+        rather than on a phrase, so improving the message again does not
+        break this."""
         code = self.run_cli("--config", str(self.tmp / "nope.json"))
         self.assertEqual(code, 2)
+        self.assertIn("nope.json", self.err.getvalue())
+        self.assertEqual(self.out.getvalue(), "")
+
+    def test_an_unreadable_config_that_EXISTS_still_says_not_readable(self):
+        """A file present but unreadable is a different problem from an
+        absent one, and must not be answered with setup instructions."""
+        path = self.tmp / "locked.json"
+        path.write_text("{}", encoding="utf-8")
+        path.chmod(0o000)
+        self.addCleanup(path.chmod, 0o600)
+        code = self.run_cli("--config", str(path))
+        self.assertEqual(code, 2)
         self.assertIn("not readable", self.err.getvalue())
+        self.assertNotIn("no archetypes file yet", self.err.getvalue())
 
     def test_malformed_argument_exits_2_without_raising(self):
         code = self.run_cli("--config", str(self.path), "--window", "notanumber")
@@ -1589,6 +1607,54 @@ class TestSilenceBrokenPipe(unittest.TestCase):
         landed = self.run_capturing_stdout("pass")
         self.assertIn("before", landed)
         self.assertIn("after", landed)
+
+
+class TestFirstRunExperience(ConfigTempDir):
+    """A new user's first `li-digest` hits a missing archetypes.json, and
+    the answer was "config not readable: <path>" -- accurate, and useless.
+
+    It matters more here than in a tool with no credentials or quota. Each
+    archetype costs one API call per run against a 100/day cap on a real
+    LinkedIn account, so a config someone guessed at is not merely noisy,
+    it is expensive. And every lane needs TWO fields kept in agreement,
+    which is this project's named top risk.
+    """
+
+    def run_cli(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        code = li_digest.main(list(argv), run=FakeRunner(by_query={}),
+                              out=out, err=err, today=date(2026, 8, 5))
+        return code, out.getvalue(), err.getvalue()
+
+    def test_a_missing_config_explains_what_the_file_is_for(self):
+        code, out, err = self.run_cli("--config", str(self.tmp / "absent.json"))
+        self.assertEqual(code, 2)
+        self.assertEqual(out, "", "stdout stays data-only")
+        lowered = err.lower()
+        self.assertIn("absent.json", err, "must name the path it looked at")
+        self.assertIn("no archetypes file yet", lowered)
+        self.assertIn("query", lowered)
+        self.assertIn("match", lowered)
+
+    def test_it_warns_that_each_archetype_costs_a_call(self):
+        """The cap is the thing a guessed config actually burns."""
+        _, _, err = self.run_cli("--config", str(self.tmp / "absent.json"))
+        self.assertIn("100", err)
+
+    def test_a_malformed_config_is_not_reported_as_missing(self):
+        path = self.tmp / "broken.json"
+        path.write_text("{not json", encoding="utf-8")
+        code, _, err = self.run_cli("--config", str(path))
+        self.assertEqual(code, 2)
+        self.assertNotIn("no archetypes file yet", err.lower())
+        self.assertIn("not valid json", err.lower())
+
+    def test_a_valid_config_is_unaffected(self):
+        path = self.write_config(GOOD_CONFIG)
+        code, _, err = self.run_cli("--config", str(path))
+        self.assertNotIn("no archetypes file yet", err.lower())
+        self.assertEqual(code, 2, "still refuses to run unseeded")
+        self.assertIn("--seed", err)
 
 
 if __name__ == "__main__":
