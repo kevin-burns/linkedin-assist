@@ -1,0 +1,41 @@
+{
+  "defaults": {
+    "location": "Germany",
+    "limit": 50,
+    "exclude_title": ["recruiter"],
+    "exclude_company": [],
+    "highlight": ["terraform", "kubernetes"]
+  },
+  "archetypes": [
+    {
+      "name": "platform",
+      "label": "Platform",
+      "query": "\"platform engineer\" OR \"cloud engineer\" OR \"site reliability engineer\" OR terraform",
+      "match": "platform|cloud engineer|terraform|terragrunt|infrastructure|sre|site reliability|devops"
+    },
+    {
+      "name": "fde",
+      "label": "FDE",
+      "query": "\"forward deployed engineer\" OR \"professional services engineer\" OR \"solutions engineer\" OR \"customer engineer\"",
+      "match": "forward.deployed|professional services|solutions engineer|customer engineer|delivery engineer"
+    },
+    {
+      "name": "em",
+      "label": "EM",
+      "query": "\"engineering manager\" OR \"tech lead\" OR \"head of platform\"",
+      "match": "engineering manager|tech lead|technical lead|head of (platform|engineering)|sre manager"
+    },
+    {
+      "name": "architect",
+      "label": "Architect",
+      "query": "\"solution architect\" OR \"cloud architect\" OR \"principal architect\"",
+      "match": "solutions? architect|cloud architect|principal architect|platform architect|architekt"
+    },
+    {
+      "name": "ai",
+      "label": "AI",
+      "query": "\"AI engineer\" OR \"AI architect\" OR \"AI platform\" OR \"generative AI\" OR \"KI Engineer\" OR \"Künstliche Intelligenz\"",
+      "match": "\\bai\\b|\\bki\\b|künstliche intelligenz|generative|machine learning|\\bllm\\b|agentic|mlops"
+    }
+  ]
+}

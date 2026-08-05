@@ -28,9 +28,9 @@ type Connection struct {
 //   - Fuzzy company matching.
 //   - LLM "why this person" annotation.
 type Intro struct {
-	Name            string    // "First Last"
+	Name            string // "First Last"
 	ProfileURL      string
-	Company         string    // the connection's raw Company field
+	Company         string // the connection's raw Company field
 	Position        string
 	ConnectedOn     time.Time // zero when absent
 	MatchConfidence string    // "exact" in v1

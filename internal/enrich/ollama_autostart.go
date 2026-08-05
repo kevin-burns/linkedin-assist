@@ -29,11 +29,11 @@ import (
 )
 
 const (
-	envOllamaAutostart     = "LI_ASSIST_OLLAMA_AUTOSTART"
-	envOllamaStartTimeout  = "LI_ASSIST_OLLAMA_START_TIMEOUT"
-	defaultStartTimeout    = 15 * time.Second
-	pollInterval           = 250 * time.Millisecond
-	probeTimeout           = 2 * time.Second
+	envOllamaAutostart    = "LI_ASSIST_OLLAMA_AUTOSTART"
+	envOllamaStartTimeout = "LI_ASSIST_OLLAMA_START_TIMEOUT"
+	defaultStartTimeout   = 15 * time.Second
+	pollInterval          = 250 * time.Millisecond
+	probeTimeout          = 2 * time.Second
 )
 
 // ensureOllamaRunning is the internal entry point used by NewFromEnv. It reads
