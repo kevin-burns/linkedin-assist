@@ -189,6 +189,50 @@ sweep: 30 new / 12 seen / 2 excluded (cache: 44 jobs) | enriched 20/30 new (cap 
 
 The cache is a self-evicting JSONL file (`jq`-able, disposable). A repost gets a new job id, so it correctly shows up as new.
 
+**A caveat worth knowing before you build on the diff:** LinkedIn's result set for the same query is not stable between calls. Ranking and pagination shift, so a job that was absent from one response can appear in the next without being newly posted. In a measured run on 2026-08-05, a five-query sweep returned 128 results classified NEW, of which only **5 had actually been posted that day**. `NEW` therefore means *"not in your cache yet"* — which is exactly what it says — but it is **not** a reliable proxy for *"newly posted"*. If you want the latter, filter on `posted_at`.
+
+### Archetype digest (`li-digest`)
+
+`skill/scripts/li_digest.py` is a companion script that answers a different question from `jobs sweep`: not *"what matches this keyword"* but *"what appeared across all the kinds of role I'd actually take"*. It runs **one sweep per archetype**, merges the results, and labels each job with **every** archetype it matches.
+
+Python 3 standard library only — no `jq`, no packages to install. macOS and Linux, same as the binary.
+
+**An archetype is two fields doing two different jobs:**
+
+```jsonc
+{
+  "name": "platform",                    // stable key, used by --only
+  "label": "Platform",                   // what appears in the table
+  "query": "\"platform engineer\" OR terraform",   // LinkedIn boolean, server-side
+  "match": "platform|terraform|sre|devops"         // regex, applied locally to the title
+}
+```
+
+`query` is what LinkedIn searches. `match` is what decides the label — and it runs against **every** archetype, not just the one whose sweep returned the job. That is the whole point: `sweep` credits a result to whichever archetype ran first, which is ordering luck rather than meaning, so a role that genuinely straddles two lanes would otherwise be filed under one arbitrarily. With local matching, *AI Platform Architect* comes back labelled `Platform, Architect, AI`.
+
+The cost of that design is a synchronisation duty: **when you change a `query`, review its `match`.** Drift between them is the most likely defect in this tool, and the test suite asserts that each shipped `match` fires on a title its `query` would plausibly return. A job that matches no `match` at all falls back to the label of the archetype that found it, so the column is never blank — a run with several fallbacks is a signal your regexes have drifted behind your queries.
+
+Archetypes live in `~/.config/li-assist/archetypes.json`. That file is **personal data** — your real job-hunt targets — so it is gitignored (`**/archetypes.json`) and never committed. `skill/scripts/archetypes.example.json` is the tracked template; it ships five lanes (platform, forward-deployed, engineering-manager, architect, AI/KI) as a starting point, not a recommendation.
+
+```sh
+mkdir -p ~/.config/li-assist ~/.local/bin
+cp skill/scripts/archetypes.example.json ~/.config/li-assist/archetypes.json
+ln -s "$PWD/skill/scripts/li_digest.py" ~/.local/bin/li-digest   # this is what makes `li-digest` a command
+
+li-digest --seed              # once: prime the cache so the next run is a true delta
+li-digest                     # the daily table
+li-digest --window 3          # narrower window; see the caveat above
+li-digest --only em,platform  # one or two lanes — costs one call per named lane, not the full set
+li-digest --json              # pipeable array on stdout
+li-digest show 4431723620     # one posting's full description
+```
+
+`show` uses `jobs get` **without** `--enrich`: the description is already in the payload, so reading one posting costs a single call and no LLM. The digest never enriches either — five archetypes with enrichment would be five searches plus up to 100 detail fetches, which is a bad daily habit against the rate limiter.
+
+Exit codes: `0` clean, `1` one or more archetypes failed and the rest still printed, `2` a config or usage error — including a dead session, a rate limit, a daily cap, or two consecutive archetype failures, any of which abort the whole run rather than spending the remaining calls.
+
+The `--seed` step exists because the first run against an empty cache would report every result as new. Seed once, silently, and the next run is a genuine delta.
+
 ### Warm intros (offline)
 
 `--intros` (on `jobs get` and `jobs sweep`) cross-references your own LinkedIn connections against each job's employer and lists who you already know there. It runs **entirely offline** from your **Connections.csv** export: zero extra network calls, and it never messages anyone.
