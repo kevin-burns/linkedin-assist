@@ -669,12 +669,17 @@ def _silence_broken_pipe() -> None:
     Measured honestly: it does NOT currently change the outcome for
     li-digest, because both output branches emit the whole document in a
     single print() and nothing is left buffered once that write fails.
-    Reproducing the shutdown error needs many small writes (a 300k-line
-    print-per-line loop gives exit 120 without this and 0 with it -- see
-    TestSilenceBrokenPipe). It is kept because it is one cheap call that
-    makes the exit code independent of how the output happens to be
-    chunked, and the chunking is an implementation detail nobody would
-    think to check when changing render_table.
+    Reproducing the shutdown error needs many small writes, and even then
+    it is platform- and version-dependent -- a 300k-line print-per-line
+    loop gives exit 120 on macOS 3.9/3.10 and Linux 3.14, but exits 0 on
+    Linux 3.9/3.10/3.13.
+
+    Kept anyway, because it is one cheap call that makes the exit code
+    independent of BOTH of those -- how the output happens to be chunked,
+    and which CPython you are on. Chunking is an implementation detail
+    nobody would think to re-check when changing render_table.
+    TestSilenceBrokenPipe asserts the redirect itself, which is
+    deterministic everywhere, rather than the symptom, which is not.
 
     Under test `out` is a StringIO with no real fileno(), hence the guard.
     """

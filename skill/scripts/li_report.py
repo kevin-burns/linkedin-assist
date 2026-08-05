@@ -406,11 +406,11 @@ def main(argv=None, out=None, err=None) -> int:
                 # in ONE print(), so nothing is left buffered when that write
                 # fails, and the redirect does not currently change the exit
                 # code. Kept so the exit code cannot start depending on how
-                # the output happens to be chunked. The mechanism it guards
-                # is exercised for real in
-                # test_li_digest.TestSilenceBrokenPipe, where a
-                # many-small-writes loop does leave a buffer and exits 120
-                # without it.
+                # the output happens to be chunked -- nor on which CPython
+                # you are running, since the shutdown-flush symptom is
+                # itself platform- and version-dependent. The redirect is
+                # deterministic everywhere and is asserted directly in
+                # test_li_digest.TestSilenceBrokenPipe.
                 #
                 # `out` in tests is an io.StringIO with no real fileno();
                 # guard for that.

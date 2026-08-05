@@ -1534,52 +1534,61 @@ class TestBrokenPipeInARealPipeline(ConfigTempDir):
 
 
 class TestSilenceBrokenPipe(unittest.TestCase):
-    """_silence_broken_pipe survives deletion against li-digest's own output,
-    because both branches emit the document in ONE print() and nothing is
+    """_silence_broken_pipe's CALL SITE in main survives deletion, because
+    both output branches emit the document in one print() and nothing is
     left buffered when that write fails. An untested defensive call is how
-    dead code accumulates, so this proves the mechanism directly rather
-    than leaving the docstring to assert it.
+    dead code accumulates, so the helper's own contract is asserted here
+    directly: after it runs, the real stdout fd points at /dev/null, so
+    anything written afterwards -- including CPython's flush at interpreter
+    shutdown -- goes nowhere instead of at a dead pipe.
 
-    Many small writes DO leave a buffer, and then CPython's shutdown flush
-    raises a second BrokenPipeError -- `Exception ignored in:
-    <_io.TextIOWrapper name='<stdout>'>` and exit 120. That is the case
-    this drives, through the real shipped helper, so the guard stays honest
-    if render_table ever starts streaming row by row.
+    Asserting the CONTRACT rather than the symptom, deliberately. The
+    symptom (`Exception ignored in: <_io.TextIOWrapper name='<stdout>'>`
+    plus exit 120 from the shutdown flush) depends on how much data is
+    still buffered when the pipe dies, and that varies by platform and
+    CPython version: a 300k-line print-per-line loop reproduces it on macOS
+    3.9/3.10 and on Linux 3.14, but not on Linux 3.9/3.10/3.13. A test
+    pinned to the symptom is red on half the support matrix while the
+    helper works perfectly on all of it. The redirect itself is
+    deterministic everywhere.
     """
 
     SCRIPT = (
         "import sys\n"
         "sys.path.insert(0, {scripts!r})\n"
         "import li_digest\n"
-        "try:\n"
-        "    for i in range(300000):\n"
-        "        print('line %d' % i)\n"
-        "except BrokenPipeError:\n"
-        "    {call}\n"
-        "    sys.exit(0)\n"
+        "sys.stdout.write('before\\n')\n"
+        "sys.stdout.flush()\n"
+        "{call}\n"
+        "sys.stdout.write('after\\n')\n"
+        "sys.stdout.flush()\n"
     )
 
-    def run_piped(self, call):
+    def run_capturing_stdout(self, call):
         scripts = str(Path(li_digest.__file__).resolve().parent)
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "probe.py"
-            path.write_text(self.SCRIPT.format(scripts=scripts, call=call), encoding="utf-8")
-            return close_pipe_early(
-                [sys.executable, str(path)],
-                {**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
-            )
+            probe = Path(tmp) / "probe.py"
+            probe.write_text(self.SCRIPT.format(scripts=scripts, call=call), encoding="utf-8")
+            landed = Path(tmp) / "stdout.txt"
+            with landed.open("w") as sink:
+                proc = _subprocess.run(
+                    [sys.executable, str(probe)], stdout=sink, stderr=_subprocess.PIPE,
+                    env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+                )
+            self.assertEqual(proc.returncode, 0, proc.stderr.decode("utf-8", "replace"))
+            return landed.read_text(encoding="utf-8")
 
-    def test_without_the_helper_the_shutdown_flush_still_reports_a_crash(self):
-        """The failure being guarded against. If this ever stops failing,
-        the helper is genuinely dead and should be deleted, not kept."""
-        code, stderr = self.run_piped("pass")
-        self.assertIn("Exception ignored", stderr)
-        self.assertNotEqual(code, 0)
+    def test_writes_after_the_helper_go_to_devnull(self):
+        landed = self.run_capturing_stdout("li_digest._silence_broken_pipe()")
+        self.assertIn("before", landed)
+        self.assertNotIn("after", landed)
 
-    def test_with_the_helper_the_same_pipeline_is_silent_and_exits_0(self):
-        code, stderr = self.run_piped("li_digest._silence_broken_pipe()")
-        self.assertEqual(stderr, "")
-        self.assertEqual(code, 0)
+    def test_control_without_the_helper_both_writes_land(self):
+        """Pins the test above to the helper rather than to some other
+        reason 'after' might go missing."""
+        landed = self.run_capturing_stdout("pass")
+        self.assertIn("before", landed)
+        self.assertIn("after", landed)
 
 
 if __name__ == "__main__":
