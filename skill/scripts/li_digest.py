@@ -713,6 +713,30 @@ def main(argv=None, run=subprocess.run, out=None, err=None, today=None) -> int:
         if args.window < 0:
             raise ConfigError("--window must not be negative")
 
+        if not Path(args.config).exists():
+            # Deliberately verbose, and only on the path that is fatal
+            # anyway. stdout stays empty, so a pipeline sees nothing; this
+            # is stderr, which is human by this tool's own contract.
+            log(f"li-digest: no archetypes file yet at {args.config}")
+            log("")
+            log("  Each archetype is one career track and needs TWO fields that must")
+            log("  agree with each other:")
+            log("    query  — the LinkedIn boolean search that fetches candidates")
+            log("    match  — a local regex that labels which archetypes a title fits")
+            log("")
+            log("  Keeping those two in step is the easiest thing to get wrong here,")
+            log("  so ask Claude to write the file: describe the roles you want and it")
+            log("  generates both fields together from one description.")
+            log("")
+            log(f"    mkdir -p {Path(args.config).parent}")
+            log("    cp <repo>/skill/scripts/archetypes.example.json "
+                f"{args.config}   # then edit")
+            log("")
+            log("  Cost matters before you guess: every archetype spends one API call")
+            log("  per run against a 100/day cap on your real account. Four archetypes")
+            log("  is four calls each time you run this. Start with two or three.")
+            return 2
+
         config = load_config(args.config)
         if args.only:
             config = select_archetypes(config, args.only)

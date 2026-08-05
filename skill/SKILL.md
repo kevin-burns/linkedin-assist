@@ -207,14 +207,60 @@ Python 3 standard library only — no jq, no packages to install. **macOS and Li
 matching what `li-assist` itself ships; Windows users need WSL.
 
 Archetypes live in `~/.config/li-assist/archetypes.json` — **not** in the repo, because it is
-personal data. `skill/scripts/archetypes.example.json` is the template. Set up once, from the
-repo root:
+personal data. Link the commands once, from the repo root:
 
 ```bash
 mkdir -p ~/.config/li-assist ~/.local/bin
-cp skill/scripts/archetypes.example.json ~/.config/li-assist/archetypes.json
 ln -s "$PWD/skill/scripts/li_digest.py" ~/.local/bin/li-digest
 ln -s "$PWD/skill/scripts/li_report.py" ~/.local/bin/li-report
+```
+
+### Write the archetypes file FOR the user — do not tell them to edit JSON
+
+`skill/scripts/archetypes.example.json` exists, but copying it is the worse path and
+`li-digest` says so when the file is absent. Two reasons, both specific to this tool:
+
+**Every archetype needs `query` and `match` to agree, and nothing checks that they do.**
+`query` is a LinkedIn boolean that decides which jobs are *fetched*; `match` is a local
+regex that decides which archetypes a title is *labelled* with. They express one intent in
+two languages, and drift between them is this project's named top risk — a user who tightens
+one and forgets the other gets silently wrong labels, or fetches roles nothing will label.
+Generating both from a single plain-English description is the mitigation. Never write one
+without re-deriving the other.
+
+**A guessed config costs real calls.** Each archetype is one `jobs sweep` per run against a
+**100/day cap on the user's actual LinkedIn account**. Four archetypes is four calls every
+run, plus four more to `--seed`. Start with two or three; add more once the output earns it.
+
+So: ask what roles they want, their seniority, and their location, then write the file.
+
+```json
+{
+  "defaults": { "location": "Germany", "limit": 50,
+                "exclude_title": ["recruiter", "werkstudent"] },
+  "archetypes": [
+    { "name": "platform", "label": "Platform",
+      "query": "\"platform engineer\" OR \"site reliability\" OR devops",
+      "match": "platform engineer|site reliability|\\bsre\\b|\\bdevops\\b" }
+  ],
+  "highlight": ["terraform", "kubernetes"]
+}
+```
+
+Note how `query` and `match` cover the same ground: every term the boolean can return has a
+counterpart in the regex. That is the property to preserve on every later edit.
+
+`match` is tested against the **title only**, so write title-shaped patterns — `platform
+engineer`, not `kubernetes`. A tool term belongs in `highlight`, which stars a row without
+filtering.
+
+### Before the first sweep
+
+Check the session, or the first archetype fails and the circuit breaker aborts the rest:
+
+```bash
+li-assist auth status     # or: li-assist doctor
+li-digest --seed          # once: primes the cache so the next run is a true delta
 ```
 
 The symlinks are what make `li-digest` and `li-report` commands. Without them, substitute
