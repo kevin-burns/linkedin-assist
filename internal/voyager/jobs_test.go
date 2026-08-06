@@ -63,33 +63,31 @@ func TestParseJobsSearch_Replay(t *testing.T) {
 
 	// Spot-check: find the Axel Springer / AWS Cloud Platform Engineer card
 	// (urn:li:fsd_jobPosting:4426968077, known from corpus).
-	var found *struct {
-		title    string
-		company  string
-		location string
-	}
+	// Plain values rather than a pointer to an anonymous struct. The pointer
+	// form tripped staticcheck SA5011: it read `found == nil` as evidence the
+	// pointer can be nil, then flagged each later `found.title` as a possible
+	// nil dereference, because it does not treat t.Fatal as ending the
+	// function. A bool and two strings cannot be nil, so the warning has
+	// nothing to attach to — and this drops a `company` field that was
+	// assigned on every iteration and never read.
+	var (
+		found           bool
+		title, location string
+	)
 	for _, j := range jobs {
 		if j.Company().Name() == "Axel Springer" {
-			found = &struct {
-				title    string
-				company  string
-				location string
-			}{
-				title:    j.Title(),
-				company:  j.Company().Name(),
-				location: j.Location(),
-			}
+			found, title, location = true, j.Title(), j.Location()
 			break
 		}
 	}
-	if found == nil {
+	if !found {
 		t.Fatal("spot-check: could not find Axel Springer job")
 	}
-	if !strings.Contains(found.title, "Cloud") {
-		t.Errorf("spot-check: expected title to contain 'Cloud', got %q", found.title)
+	if !strings.Contains(title, "Cloud") {
+		t.Errorf("spot-check: expected title to contain 'Cloud', got %q", title)
 	}
-	if !strings.Contains(found.location, "Berlin") {
-		t.Errorf("spot-check: expected location to contain 'Berlin', got %q", found.location)
+	if !strings.Contains(location, "Berlin") {
+		t.Errorf("spot-check: expected location to contain 'Berlin', got %q", location)
 	}
 	// URN must be the concrete job posting URN, not the compound card URN.
 	for _, j := range jobs {
