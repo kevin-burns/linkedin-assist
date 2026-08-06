@@ -350,6 +350,29 @@ to the current UTC time when omitted). `--out` omitted writes the HTML to stdout
 given, it writes the file and reports its size to stderr. Exit codes: `0` clean, `2` a config or
 usage error — including a negative `--window`, a missing archetypes file, or a missing cache.
 
+#### Finish at the report, and put it somewhere findable
+
+**Produce the report and show it rather than waiting to be asked.** The digest table is a
+preview; the report is what the user actually works from, so ending at the table only costs
+them a second prompt for something they were always going to want.
+
+A relative `--out` resolves against whatever the working directory happens to be, which means
+the same command lands in a project folder one day and `$HOME` the next. **Pass an absolute
+path, and tell the user where you put it** — a file they have to go hunting for is not a
+deliverable.
+
+Keep every job-search artefact in **one folder**; `~/job-search` is a reasonable default when
+the user has no existing workspace:
+
+```bash
+li-report --window 30 --out ~/job-search/prospects.html
+```
+
+This matters beyond tidiness if the user also aggregates public job boards. LinkedIn and the
+free boards cover **different segments of the same search** — the boards lean remote and
+contract, LinkedIn carries more permanent roles — so neither substitutes for the other, and
+the comparison is the point. That only works if both reports sit side by side.
+
 ## Recipes
 
 **Daily new-jobs sweep, local-LLM enriched:**
