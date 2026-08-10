@@ -131,6 +131,35 @@ def _is_excluded(row, exclude_companies_lower) -> bool:
     return any(term in name for term in exclude_companies_lower)
 
 
+def _sort_date(row) -> str:
+    """row -> the string `select_rows` sorts on. "" means undated.
+
+    Two jobs, both of which caused real defects:
+
+    **Coerce with str().** `bucket_of` already does this before parsing (see
+    li_digest's own comment on this defect class in `_cells`), but the row's
+    `posted_at` is left untouched by `enrich_rows`. A cache holding a
+    non-string `posted_at` (e.g. int 20260804) alongside any string-dated
+    row would compare int < str mid-sort and raise TypeError, escaping past
+    `except ConfigError` in main() to an uncaught traceback.
+
+    **Fold ZERO_DATE into "".** `bucket_of` treats a missing `posted_at` and
+    the ZERO_DATE sentinel as the same thing -- both are `undated` -- but
+    left raw they sort differently, because "0001-01-01T00:00:00Z" outranks
+    "". Undated rows were ordered by which shape the cache happened to store
+    rather than by anything a reader could see. Both now land on "", so they
+    sort together at the bottom and lane count orders them among themselves.
+
+    Undated rows sort last, and that is deliberate. They are kept, because a
+    missing date is not evidence a job is stale, but they cannot be ranked
+    against dates they do not have and guessing them into the recent end
+    would be inventing data.
+    """
+    raw = row.get("posted_at")
+    value = "" if not raw else str(raw)
+    return "" if value == li_digest.ZERO_DATE else value
+
+
 def select_rows(raw_rows, config: "li_digest.Config", window: int, today=None) -> list:
     """Cache rows -> enriched, filtered, sorted report rows.
 
@@ -152,16 +181,25 @@ def select_rows(raw_rows, config: "li_digest.Config", window: int, today=None) -
     kept = [r for r in enriched if r.get("bucket") != "old"]
     kept.sort(
         key=lambda r: (
+            # DATE LEADS, lane count breaks ties, full timestamp settles the
+            # rest. Until 2026-08-10 the first two were the other way round,
+            # so every multi-lane row outranked every single-lane one however
+            # old it was. That reads fine on a 359-row shortlist and badly at
+            # ~580: the top of the report was stale three-lane matches while
+            # the newest postings sat pages down, under a column headed
+            # `Posted`. Multi-lane did not need the sort order -- the page
+            # already ships a `Multi-lane` checkbox that filters to that set.
+            #
+            # [:10], not the whole string: `_posted_cell` renders only the
+            # date, but posted_at carries a full timestamp. Sorting on the
+            # whole thing made time-of-day the real tiebreaker and lane count
+            # never fired -- a live cache had 17 distinct timestamps across
+            # the 18 rows sharing one date. Readers saw a column of identical
+            # dates ordered by a field the page does not show. Truncating to
+            # the rendered precision is what makes the tiebreak visible.
+            _sort_date(r)[:10],
             len([a for a in (r.get("archetypes") or "").split(",") if a.strip()]),
-            # str(...), not a bare `or ""`: bucket_of already coerces
-            # posted_at with str() before parsing it (see li_digest's own
-            # comment on this exact defect class in _cells), but the row's
-            # posted_at field itself is left untouched by enrich_rows. A
-            # cache with a non-string posted_at (e.g. int 20260804)
-            # alongside any string-dated row would otherwise compare
-            # int < str mid-sort and raise TypeError, escaping past
-            # `except ConfigError` in main() to an uncaught traceback.
-            str(r.get("posted_at") or ""),
+            _sort_date(r),
         ),
         reverse=True,
     )
