@@ -182,6 +182,127 @@ class TestSelectRows(ReportTempDir):
         kept = li_report.select_rows(rows, self.cfg, 14, today=self.today)
         self.assertEqual(len(kept), 2)
 
+    def test_newest_posting_sorts_first_even_when_it_matches_fewer_lanes(self):
+        """Posted date is the PRIMARY sort key; lane count only breaks ties.
+
+        This was the other way round until 2026-08-10: lane count led, so
+        every multi-lane row outranked every single-lane one no matter how
+        old it was. At 359 rows that read as a shortlist; once the corpus
+        reached ~580 the top of the report was stale three-lane matches
+        while the newest postings sat pages down -- under a column headed
+        `Posted`. The multi-lane view does not need to own the sort order:
+        the report already ships a `Multi-lane` checkbox that filters to
+        exactly that set.
+        """
+        rows = [
+            # two lanes (platform + em), older
+            cache_job("old", "Engineering Manager, Platform",
+                      posted="2026-07-29T00:00:00Z"),
+            # one lane (platform), newer
+            cache_job("new", "Platform Engineer",
+                      posted="2026-08-04T00:00:00Z"),
+        ]
+        kept = li_report.select_rows(rows, self.cfg, 14, today=self.today)
+        self.assertEqual(
+            [r["urn"] for r in kept],
+            ["urn:li:fsd_jobPosting:new", "urn:li:fsd_jobPosting:old"],
+            "newest posting must sort first even though it matches fewer lanes",
+        )
+
+    def test_lane_count_still_breaks_ties_on_equal_dates(self):
+        """Lane count survives as the tiebreaker, so same-day rows still
+        surface the multi-lane match first. Without this the sort would be
+        date-only and the multi-lane signal would be lost outright."""
+        rows = [
+            cache_job("one", "Platform Engineer", posted="2026-08-04T00:00:00Z"),
+            cache_job("two", "Engineering Manager, Platform",
+                      posted="2026-08-04T00:00:00Z"),
+        ]
+        kept = li_report.select_rows(rows, self.cfg, 14, today=self.today)
+        self.assertEqual(
+            [r["urn"] for r in kept],
+            ["urn:li:fsd_jobPosting:two", "urn:li:fsd_jobPosting:one"],
+            "on equal dates the row matching more lanes must come first",
+        )
+
+    def test_lane_count_breaks_ties_within_the_same_DISPLAYED_date(self):
+        """The tiebreaker must fire on the date the reader can SEE.
+
+        `posted_at` carries a full timestamp but `_posted_cell` renders only
+        `posted_at[:10]`. Sorting on the whole string made time-of-day the
+        real tiebreaker, so lane count effectively never fired: a live cache
+        had 17 distinct timestamps across the 18 rows sharing one date. The
+        page showed a column of identical dates ordered by an invisible
+        field, and the README claim that a same-day multi-lane row outranks
+        a single-lane one was simply untrue.
+
+        Here the ONE-lane row carries the later timestamp, so it wins on
+        the full string and loses on the date. Sorting on the full string
+        puts `late` first and fails this test.
+        """
+        rows = [
+            cache_job("late", "Platform Engineer",
+                      posted="2026-08-04T23:59:00Z"),          # 1 lane, later
+            cache_job("multi", "Engineering Manager, Platform",
+                      posted="2026-08-04T00:01:00Z"),          # 2 lanes, earlier
+        ]
+        kept = li_report.select_rows(rows, self.cfg, 14, today=self.today)
+        self.assertEqual(
+            [r["urn"] for r in kept],
+            ["urn:li:fsd_jobPosting:multi", "urn:li:fsd_jobPosting:late"],
+            "within one displayed date, lane count must decide -- not time of day",
+        )
+
+    def test_undated_rows_sort_after_every_dated_row(self):
+        """Undated rows are KEPT (a missing date is not evidence a job is
+        stale) but they cannot be ranked against dates they do not have, so
+        they go last rather than being guessed into the recent end. This is
+        deliberate and asserted, because it is otherwise a silent product
+        change: before date led the sort, a multi-lane undated row could
+        rank near the top."""
+        rows = [
+            cache_job("undated", "Engineering Manager, Platform",
+                      posted=li_digest.ZERO_DATE),             # 2 lanes, undated
+            cache_job("dated", "Platform Engineer",
+                      posted="2026-07-29T00:00:00Z"),          # 1 lane, oldest dated
+        ]
+        kept = li_report.select_rows(rows, self.cfg, 14, today=self.today)
+        self.assertEqual(
+            [r["urn"] for r in kept],
+            ["urn:li:fsd_jobPosting:dated", "urn:li:fsd_jobPosting:undated"],
+            "an undated row must not outrank a dated one, whatever it matches",
+        )
+
+    def test_undated_rows_are_ordered_among_themselves_by_lane_count(self):
+        """Both undated shapes must sort identically.
+
+        `bucket_of` treats a missing `posted_at` and the ZERO_DATE sentinel
+        as the same thing, but they used to produce different sort keys
+        ("" vs "0001-01-01T00:00:00Z"), so the sentinel outranked the
+        missing value for no reason a reader could see. Normalising them
+        lets lane count order the undated group instead of the accident of
+        which shape the cache happened to store.
+
+        The sentinel row deliberately carries FEWER lanes here. If the raw
+        strings still decide, "0001-01-01T00:00:00Z" beats "" and the
+        one-lane sentinel leads; only normalising both to the same key lets
+        lane count put the two-lane row first. An earlier version of this
+        test had it the other way round and passed on the sentinel winning,
+        proving nothing.
+        """
+        rows = [
+            cache_job("sentinel1", "Platform Engineer",
+                      posted=li_digest.ZERO_DATE),               # 1 lane
+            dict(cache_job("none2", "Engineering Manager, Platform"),
+                 posted_at=None),                                # 2 lanes
+        ]
+        kept = li_report.select_rows(rows, self.cfg, 14, today=self.today)
+        self.assertEqual(
+            [r["urn"] for r in kept],
+            ["urn:li:fsd_jobPosting:none2", "urn:li:fsd_jobPosting:sentinel1"],
+            "the two-lane undated row must lead, whichever undated shape it uses",
+        )
+
 
 class TestWorkplace(unittest.TestCase):
     """li_digest._is_remote's `(Remote)` marker check is case-insensitive;
