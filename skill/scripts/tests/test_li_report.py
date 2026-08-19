@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -38,7 +38,23 @@ GOOD_CONFIG = {
 }
 
 
-def cache_job(urn, title, company="Acme", posted="2026-08-04T00:00:00Z",
+# Relative, NOT a literal date. This default was "2026-08-04T00:00:00Z", and
+# li-report windows against the real clock (select_rows' `today` seam is only
+# reachable from unit tests, not from the CLI ones). On 2026-08-19 the fixture
+# turned 15 days old, fell out of the default 14-day window, and four CLI tests
+# started failing on a calendar boundary with no code change on any branch --
+# reading, wrongly, as though the PR under review had broken them.
+#
+# Two days keeps it comfortably inside every window the suite exercises while
+# still being genuinely "recent". Tests that care about a particular date --
+# the old-bucket and sort-order cases -- pass `posted=` explicitly and are
+# unaffected.
+DEFAULT_POSTED = (datetime.now(timezone.utc) - timedelta(days=2)).strftime(
+    "%Y-%m-%dT%H:%M:%SZ"
+)
+
+
+def cache_job(urn, title, company="Acme", posted=DEFAULT_POSTED,
               location="Germany (Remote)", description=None):
     row = {
         "urn": f"urn:li:fsd_jobPosting:{urn}",
