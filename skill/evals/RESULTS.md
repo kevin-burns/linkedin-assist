@@ -55,26 +55,39 @@ This case also supplies the **noise floor**: OLD splits 1/2 across identical inp
 within-arm variance is real — which is what makes the unanimous 3/3-vs-3/3 split on
 `html-ambiguous` meaningful rather than luck.
 
-## Control — was the `self-contained` tweak necessary?
+## Control — was the `self-contained` tweak necessary? No.
 
-`self-contained HTML report` was removed from the description before round 1, on the
-grounds that the identical phrase sits in job-feeds' description. Re-running
-`html-report-fork` against the **untweaked** description (self-contained present):
+`self-contained HTML report` was removed from li-assist's description because the identical
+phrase sits in job-feeds'. The hypothesis: that shared phrase would pull an ambiguous report
+request toward job-feeds.
 
-| r1 | r2 | r3 |
-|---|---|---|
-| li-assist | li-assist | li-assist |
+Three arms against the ambiguous prompt, 3 runs each:
 
-**The collision did not reproduce.** The tweak was defensive and, on this evidence,
-unnecessary. It is kept because two competing pointers sharing a literal phrase is a
-single-source-of-truth problem independently of routing, and "offline HTML report" tested
-clean on the hard case. **Caveat: the untweaked arm was only run against the explicit
-prompt, not the ambiguous one — which is where a collision would be most likely to show.
-That control is under-powered and the question is not fully settled.**
+| description | li-assist | job-feeds | none |
+|---|---|---|---|
+| OLD (1110 chars) | 0/3 | **0/3** | 3/3 |
+| UNTWEAKED — self-contained present (748) | 2/3 | **0/3** | 1/3 |
+| NEW — self-contained removed (765) | 3/3 | **0/3** | 0/3 |
+
+**job-feeds was never chosen — 0 of 9 runs.** The collision does not exist. The shared phrase
+pulled nothing.
+
+The 2/3 vs 3/3 gap between untweaked and tweaked is **within the noise floor**: the
+`since-ambiguous` OLD arm splits 1/2 across identical inputs, so a one-run difference at n=3
+is not a signal. On this evidence the tweak neither helped nor hurt.
+
+It is kept anyway, on the single-source-of-truth principle — two competing pointers should
+not share a literal phrase — but **not** on any measured routing benefit. The hypothesis
+that motivated it was wrong, and the record should say so.
+
+What the three arms *do* show, unambiguously, is the effect that matters: 0/3 under the old
+description versus 2/3 and 3/3 under both rewrites. The branch was unreachable; the rewrite
+made it reachable. The exact wording is noise.
 
 ## Method limits
 
-- Round 1 is one run per arm; only round 2 has replication.
+- Round 1 is one run per arm; rounds 2 and the control have 3.
+- 30 proxy dispatches in total.
 - Sonnet, not the session model.
 - A forced two-way choice with both descriptions in view. Real routing has ~46 installed
   skills competing and no "pick one" instruction.
