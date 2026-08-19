@@ -84,6 +84,48 @@ What the three arms *do* show, unambiguously, is the effect that matters: 0/3 un
 description versus 2/3 and 3/3 under both rewrites. The branch was unreachable; the rewrite
 made it reachable. The exact wording is noise.
 
+## Superseded — the real harness disagrees
+
+Everything above is a **proxy**: a model shown both descriptions and asked to pick one. On
+2026-08-19 the same questions were put through `skill-creator`'s `run_eval.py`, which drives
+real `claude -p` sessions and detects triggering by watching for the `Skill` tool. Four
+queries, both description arms, three runs each, Haiku, sequential:
+
+| query | expect | NEW | OLD |
+|---|---|---|---|
+| Check LinkedIn for new platform engineering roles… | trigger | 2/3 | **3/3** |
+| Build me an HTML report… offline on the train | trigger | 0/3 | 0/3 |
+| Run my job digest for this morning | trigger | 0/3 | **1/3** |
+| Nine years… IC or management? | no trigger | 0/3 | 0/3 |
+
+**This does not support the proxy result.** The report branch scores 0/3 under *both*
+descriptions — the proxy's headline 0/3-vs-3/3 does not reproduce. Where the arms differ at
+all, the OLD description scores higher.
+
+Nor does it show the rewrite made anything worse: every gap is one event at n=3, and this
+harness's own control has scored 0/3, 1/1, 1/3, 2/3 and 3/3 across the evening. The honest
+verdict is **inconclusive**, and the proxy above should be read as a hypothesis that failed
+its first real test rather than as evidence.
+
+Getting a real answer needs roughly ten runs per cell to clear that noise floor — 80+ agent
+sessions. Deferred.
+
+The document changes in this commit series — the split, the deduplication, the negation
+rewrites — never depended on the routing claim and stand on their own.
+
+## Getting the harness to run at all
+
+Recorded because most of the cost was here, not in the measurement:
+
+- Nested `claude -p` inherits `ANTHROPIC_API_KEY`, which was out of credit. Every run
+  returned "Credit balance is too low" and scored 0 with no tools. `run_eval` strips
+  `CLAUDECODE` from the child env but not the API key.
+- `run_eval.py` returns False on the first tool that is not `Skill`/`Read`. Agents here
+  orient with `Bash` first, so the scan aborted before the skill fired. Patched locally.
+- A hand-made diagnostic command file left in `.claude/commands/` competed with the
+  uuid-named one the harness creates per run. The model picked either; only one counted.
+  This produced most of the apparent noise and was self-inflicted.
+
 ## Method limits
 
 - Round 1 is one run per arm; rounds 2 and the control have 3.
