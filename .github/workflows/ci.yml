@@ -27,6 +27,14 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
+          # check-latest resolves the newest 1.26.x rather than the toolchain
+          # baked into the runner image, which lags. On 2026-08-19 the image
+          # still carried go1.26.5 and govulncheck failed the build on four
+          # stdlib advisories (GO-2026-6218, -6090, -5972, -5026), every
+          # one of them already fixed in go1.26.6. Without this, the security
+          # gate goes red on whatever PR is open each time a Go patch lands,
+          # for a reason no PR author can act on.
+          check-latest: true
           cache: true
 
       - name: Architecture gate
@@ -78,6 +86,14 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.26'
+          # check-latest resolves the newest 1.26.x rather than the toolchain
+          # baked into the runner image, which lags. On 2026-08-19 the image
+          # still carried go1.26.5 and govulncheck failed the build on four
+          # stdlib advisories (GO-2026-6218, -6090, -5972, -5026), every
+          # one of them already fixed in go1.26.6. Without this, the security
+          # gate goes red on whatever PR is open each time a Go patch lands,
+          # for a reason no PR author can act on.
+          check-latest: true
           cache: true
 
       - name: golangci-lint
