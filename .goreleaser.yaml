@@ -56,8 +56,21 @@ changelog:
       order: 2
     - title: Other
       order: 999
+  # A reader of these notes wants to know what changed in the tool, not how the
+  # repository was administered. v0.2.0 shipped with a forty-line "Other"
+  # section of merge commits and dependabot bumps that buried six features and
+  # four fixes underneath it.
   filters:
     exclude:
-      - '^test:'
-      - '^chore:'
+      # Merge commits: "Merge pull request", "Merge branch",
+      # "Merge remote-tracking branch" all start the same way.
+      - '^Merge '
+      # Repository plumbing. Real work, no bearing on using the binary.
+      - '^ci[:(]'
+      - '^deps[:(]'
+      - '^build[:(]'
+      - '^style[:(]'
+      # `tests:` as well as `test:` -- both spellings are in this history.
+      - '^tests?[:(]'
+      - '^chore[:(]'
       - 'merge conflict'
