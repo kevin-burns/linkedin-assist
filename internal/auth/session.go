@@ -100,7 +100,7 @@ func Open(parent context.Context, headless bool) (*Session, error) {
 	)
 
 	allocCtx, cancelAlloc := chromedp.NewExecAllocator(parent, opts...)
-	ctx, cancelCtx := chromedp.NewContext(allocCtx)
+	ctx, cancelCtx := chromedp.NewContext(allocCtx, chromedp.WithErrorf(chromedpErrf))
 
 	// Trigger actual browser launch with a no-op run so callers get a
 	// launch error immediately rather than on the first real action.

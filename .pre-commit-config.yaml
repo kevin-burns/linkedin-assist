@@ -3,8 +3,24 @@ repos:
     rev: v0.5.1
     hooks:
       - id: go-fmt
-      - id: go-vet
+      # go-vet is NOT taken from this repo: its run-go-vet.sh does `pkg=$(go
+      # list)` at the repo root, and this module keeps no .go files there
+      # (everything is under cmd/ and internal/). `go list` then fails with
+      # "no Go files in <root>", $pkg comes out empty, and the hook fails every
+      # Go commit while `go vet ./...` is perfectly clean. Its sibling
+      # run-go-build.sh uses `go list ./...` and works, which is the tell.
+      # Replaced by the local hook below.
       - id: go-build
+
+  # The go-vet replacement, matching CI's `go vet ./...` exactly.
+  - repo: local
+    hooks:
+      - id: go-vet-all
+        name: go vet (whole module)
+        entry: go vet ./...
+        language: system
+        types: [go]
+        pass_filenames: false
 
   - repo: https://github.com/golangci/golangci-lint
     # Keep this pinned to the SAME version as CI's golangci-lint-action
