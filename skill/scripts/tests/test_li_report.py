@@ -1012,22 +1012,36 @@ class TestDocsMatchImplementation(unittest.TestCase):
         "li-report": li_report.build_parser,
     }
 
-    def test_documented_flags_all_exist(self):
-        skill_md = Path(__file__).resolve().parents[2] / "SKILL.md"
-        text = skill_md.read_text(encoding="utf-8")
-        section = text.split("## Archetype digest", 1)[1].split("\n## ", 1)[0]
-        fences = re.findall(r"```(?:[a-zA-Z]*)\n(.*?)\n```", section, re.DOTALL)
+    # Both docs, whole-file. The digest reference was split out of SKILL.md
+    # into DIGEST.md behind a pointer, and SKILL.md still carries li-digest
+    # and li-report lines in Recipes -- so scanning one file, or slicing to a
+    # single heading, silently stops covering most of what it is meant to
+    # guard. Whole-file over both is also one less thing to keep in sync than
+    # a heading name.
+    DOC_NAMES = ("SKILL.md", "DIGEST.md")
 
+    def test_documented_flags_all_exist(self):
+        skill_dir = Path(__file__).resolve().parents[2]
+        fences = []
+        for name in self.DOC_NAMES:
+            doc = skill_dir / name
+            self.assertTrue(doc.is_file(), f"{name} is missing from {skill_dir}")
+            fences += re.findall(
+                r"```(?:[a-zA-Z]*)\n(.*?)\n```",
+                doc.read_text(encoding="utf-8"),
+                re.DOTALL,
+            )
+
+        # Attribute per LINE, not per fence. A single block legitimately mixes
+        # both commands (a recipe that digests then reports), and charging the
+        # whole block to whichever command happens to be on line one blames
+        # li-digest for li-report's --out.
+        lines = [line.strip() for block in fences for line in block.splitlines()]
         for prefix, get_parser in self.PARSERS.items():
-            blocks = [
-                block for block in fences
-                if next(
-                    (line.strip() for line in block.splitlines() if line.strip()), ""
-                ).startswith(prefix)
-            ]
             documented = set()
-            for block in blocks:
-                documented.update(re.findall(r"(?<![\w-])--[a-z][a-z-]+", block))
+            for line in lines:
+                if line.startswith(prefix):
+                    documented.update(re.findall(r"(?<![\w-])--[a-z][a-z-]+", line))
             self.assertTrue(
                 documented,
                 f"found no flags in any {prefix} command block — check the "
@@ -1040,7 +1054,7 @@ class TestDocsMatchImplementation(unittest.TestCase):
                 )
             self.assertEqual(
                 documented - parser_flags, set(),
-                f"{prefix}: SKILL.md documents a flag its parser does not have",
+                f"{prefix}: the skill docs name a flag its parser does not have",
             )
 
 
