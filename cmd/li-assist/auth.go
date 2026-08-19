@@ -90,9 +90,13 @@ based on the cookie's own expiry date.`,
 
 // statusJSON is the JSON shape for --json output.
 type statusJSON struct {
-	LoggedIn   bool       `json:"logged_in"`
-	CapturedAt time.Time  `json:"captured_at,omitempty"`
-	AgeDays    float64    `json:"age_days,omitempty"`
+	LoggedIn   bool      `json:"logged_in"`
+	CapturedAt time.Time `json:"captured_at,omitempty"`
+	// No omitempty: the value is rounded to one decimal, so any session under
+	// ~1.2h old is 0.0 and encoding/json would drop the key -- leaving a
+	// consumer unable to tell a brand-new session from a missing field. A zero
+	// age is a real answer here, and scripts compute time-to-re-auth from it.
+	AgeDays    float64    `json:"age_days"`
 	Stale      bool       `json:"stale"`
 	ReauthDays int        `json:"reauth_days"`
 	LiAtExpiry *time.Time `json:"li_at_expiry,omitempty"` // nil when unknown
