@@ -231,6 +231,11 @@ Anthropic); set LI_ASSIST_ENRICH_PROVIDER to force a specific one. Set
 LI_ASSIST_ENRICH_MODEL to override the model (example; verify with your
 provider). Insights are cached and reused on subsequent calls (enrich-once).
 
+OpenRouter is also supported but is NOT auto-detected -- select it with
+LI_ASSIST_ENRICH_PROVIDER=openrouter and set OPENROUTER_API_KEY. It defaults
+to google/gemini-3.7-flash. Free :free model variants are rate-limited
+aggressively and are not recommended for this.
+
 Use --intros to surface 1st-degree LinkedIn connections at the job's company
 as warm-intro candidates. Requires a Connections.csv export from LinkedIn
 (Settings → Data Privacy → Get a copy of your data → Connections). This is
