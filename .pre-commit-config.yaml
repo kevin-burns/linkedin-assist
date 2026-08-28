@@ -24,9 +24,17 @@ repos:
 
   - repo: https://github.com/golangci/golangci-lint
     # Keep this pinned to the SAME version as CI's golangci-lint-action
-    # (.github/workflows/ci.yml). v2.12.2 verified against Go 1.26; bump both
-    # together to avoid drift. Run `pre-commit autoupdate` + edit CI in one go.
-    rev: v2.12.2
+    # (.github/workflows/ci.yml). Bump both together to avoid drift.
+    # Run `pre-commit autoupdate` + edit CI in one go.
+    #
+    # v2.13.1, built with Go 1.27. Bumped 2026-08-28 because v2.12.2 was built
+    # with Go 1.26 and PANICKED on any Go commit once Go 1.27.0 was installed
+    # locally: "file requires newer Go version go1.27 (application built with
+    # go1.26)". The linter reads the GOROOT stdlib source, so a 1.26-built
+    # type checker cannot parse 1.27's math/rand/v2. CI stayed green throughout
+    # because it pins Go 1.26 -- the failure was local-only, which is exactly
+    # how a skipped hook becomes permanent.
+    rev: v2.13.1
     hooks:
       # golangci-lint-full = `golangci-lint run` over the WHOLE module, matching
       # CI. The default `golangci-lint` id runs `--new-from-rev HEAD`, which only
