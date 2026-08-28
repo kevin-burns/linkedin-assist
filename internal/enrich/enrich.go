@@ -24,18 +24,30 @@
 //	                                 plain seconds ("20").
 //	LI_ASSIST_OLLAMA_HOST          — Ollama base URL; default
 //	                                 "http://localhost:11434".
+//
+// Request timeout (all providers):
+//
+//	LI_ASSIST_ENRICH_TIMEOUT       — per-request HTTP timeout; default "120s".
+//	                                 Accepts Go duration strings ("3m") or plain
+//	                                 seconds ("180"). Transient failures --
+//	                                 timeouts, resets, 429/5xx -- are retried
+//	                                 three times with a 1s/2s/4s backoff.
 package enrich
 
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/kevin-burns/linkedin-assist/internal/domain"
@@ -136,7 +148,7 @@ func NewOpenAICompat(baseURL, apiKey, model string) *Enricher {
 		baseURL: strings.TrimRight(baseURL, "/"),
 		apiKey:  apiKey,
 		model:   model,
-		client:  &http.Client{Timeout: 120 * time.Second},
+		client:  &http.Client{Timeout: enrichHTTPTimeout()},
 	}}
 }
 
@@ -190,29 +202,64 @@ func (o *openAICompatImpl) enrich(ctx context.Context, job domain.Job) (domain.I
 	// FREE TIERS DO CONSTANTLY". Without this a single 429 fails an enrichment that
 	// would have succeeded a second later, which on a :free model is the common case
 	// rather than the exceptional one.
-	var resp *http.Response
+	var (
+		resp     *http.Response
+		respBody []byte
+	)
 	for attempt := 0; ; attempt++ {
 		if attempt > 0 {
 			// Rebuild the body: a Reader is consumed by the previous attempt.
 			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 		}
+		lastAttempt := attempt >= maxEnrichRetries
+
+		// failure is non-nil when this attempt should be repeated after a backoff.
+		var failure error
+
 		resp, err = o.client.Do(req)
-		if err != nil {
-			return domain.Insights{}, fmt.Errorf("enrich: http: %w", err)
+		switch {
+		case err != nil:
+			// A transport error carries no status code, so retryableStatus never
+			// sees it. Before this branch existed, a connection that never opened
+			// failed the enrichment outright.
+			if lastAttempt || !retryableError(ctx, err) {
+				return domain.Insights{}, fmt.Errorf("enrich: http: %w", err)
+			}
+			failure = err
+
+		case retryableStatus(resp.StatusCode) && !lastAttempt:
+			_ = resp.Body.Close()
+			failure = fmt.Errorf("HTTP %d", resp.StatusCode)
+
+		default:
+			// Read the body INSIDE the loop. http.Client.Timeout covers the body
+			// read as well as the connection, so a provider that returns its
+			// headers promptly and then streams a slow completion fails here --
+			// not at Do. That is where the deepseek-v4-flash timeouts actually
+			// landed: "context deadline exceeded ... while reading body", after a
+			// 200. Reading outside the loop put the most common timeout out of
+			// the retry's reach.
+			respBody, err = io.ReadAll(io.LimitReader(resp.Body, maxEnrichRespBytes))
+			_ = resp.Body.Close()
+			if err != nil {
+				if lastAttempt || !retryableError(ctx, err) {
+					return domain.Insights{}, fmt.Errorf("enrich: read response: %w", err)
+				}
+				failure = err
+				break
+			}
+			if resp.StatusCode != http.StatusOK {
+				return domain.Insights{}, fmt.Errorf("enrich: provider returned HTTP %d: %s", resp.StatusCode, truncateForError(respBody))
+			}
 		}
-		if !retryableStatus(resp.StatusCode) || attempt >= maxEnrichRetries {
+		if failure == nil {
 			break
 		}
-		_ = resp.Body.Close()
 		// 1s, 2s, 4s. Bounded on purpose -- enrichment is interactive and a caller
 		// waiting a minute for a free model is worse than a soft skip.
-		time.Sleep(time.Duration(1<<attempt) * time.Second)
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return domain.Insights{}, fmt.Errorf("enrich: provider returned HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		if werr := backoffWait(ctx, attempt); werr != nil {
+			return domain.Insights{}, werr
+		}
 	}
 
 	var result struct {
@@ -222,7 +269,7 @@ func (o *openAICompatImpl) enrich(ctx context.Context, job domain.Job) (domain.I
 			} `json:"message"`
 		} `json:"choices"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.Unmarshal(respBody, &result); err != nil {
 		return domain.Insights{}, fmt.Errorf("enrich: decode response: %w", err)
 	}
 	if len(result.Choices) == 0 {
@@ -230,6 +277,22 @@ func (o *openAICompatImpl) enrich(ctx context.Context, job domain.Job) (domain.I
 	}
 
 	return parseInsights([]byte(result.Choices[0].Message.Content))
+}
+
+// maxEnrichRespBytes caps the response we will buffer. A chat completion of this
+// shape is a few kilobytes; anything approaching the cap is a misconfigured
+// endpoint, not an answer.
+const maxEnrichRespBytes = 1 << 20 // 1 MiB
+
+// truncateForError keeps an error message readable when a provider answers with
+// an HTML error page rather than JSON.
+func truncateForError(b []byte) string {
+	const cap = 4096
+	s := strings.TrimSpace(string(b))
+	if len(s) > cap {
+		return s[:cap] + "… (truncated)"
+	}
+	return s
 }
 
 // maxEnrichRetries bounds the backoff loop above: 3 retries = 1s + 2s + 4s.
@@ -250,6 +313,95 @@ func retryableStatus(code int) bool {
 	return false
 }
 
+// retryableError reports whether a transport-level failure is worth another
+// attempt. Statuses and transport errors are different populations: a timeout or
+// a dropped connection is transient and usually clears on the next attempt, while
+// a cancelled context, a bad certificate or an unresolvable host repeats
+// identically and would only burn the backoff.
+func retryableError(ctx context.Context, err error) bool {
+	if err == nil {
+		return false
+	}
+	// The caller asked to stop, or their own deadline has already passed. Neither
+	// is ours to retry -- a further attempt on a dead context fails instantly.
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	// Deterministic failures: the same request will fail the same way.
+	var certErr *tls.CertificateVerificationError
+	if errors.As(err, &certErr) {
+		return false
+	}
+	var recordErr tls.RecordHeaderError
+	if errors.As(err, &recordErr) {
+		return false
+	}
+	var dnsErr *net.DNSError
+	if errors.As(err, &dnsErr) {
+		// NXDOMAIN is permanent; a SERVFAIL or a timed-out resolver is not.
+		return !dnsErr.IsNotFound && (dnsErr.IsTemporary || dnsErr.IsTimeout)
+	}
+	// http.Client.Timeout lands here, as does a per-request deadline.
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, os.ErrDeadlineExceeded) {
+		return true
+	}
+	var netErr net.Error
+	if errors.As(err, &netErr) && netErr.Timeout() {
+		return true
+	}
+	// Connection reset/refused, or a response truncated mid-flight.
+	return errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNREFUSED) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, io.EOF) ||
+		errors.Is(err, io.ErrUnexpectedEOF)
+}
+
+// enrichBackoffBase is the first backoff interval; each attempt doubles it.
+// A variable rather than a constant only so tests can drive the whole loop
+// without spending seven real seconds in it.
+var enrichBackoffBase = time.Second
+
+// backoffWait sleeps 1s, 2s, 4s ... but abandons the wait if the caller's context
+// is done. A plain time.Sleep here would ignore a cancellation for up to 4s.
+func backoffWait(ctx context.Context, attempt int) error {
+	t := time.NewTimer(time.Duration(1<<attempt) * enrichBackoffBase)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return fmt.Errorf("enrich: %w", ctx.Err())
+	case <-t.C:
+		return nil
+	}
+}
+
+// envEnrichTimeout overrides the per-request HTTP timeout.
+const envEnrichTimeout = "LI_ASSIST_ENRICH_TIMEOUT"
+
+// defaultEnrichTimeout is generous because a large posting on a loaded provider
+// legitimately takes tens of seconds. Measured on a 19k-char posting: gemini
+// answers in ~4s, a discounted flash model has ranged from 5s to 96s.
+const defaultEnrichTimeout = 120 * time.Second
+
+// enrichHTTPTimeout reads LI_ASSIST_ENRICH_TIMEOUT. Accepts Go duration strings
+// ("180s", "3m") or bare seconds ("180"), same grammar as
+// LI_ASSIST_OLLAMA_START_TIMEOUT. A model that reliably needs more than the
+// default is otherwise unusable with no way to find that out except by hitting
+// the wall.
+func enrichHTTPTimeout() time.Duration {
+	v := strings.TrimSpace(os.Getenv(envEnrichTimeout))
+	if v == "" {
+		return defaultEnrichTimeout
+	}
+	if d, err := time.ParseDuration(v); err == nil && d > 0 {
+		return d
+	}
+	if secs, err := strconv.Atoi(v); err == nil && secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	return defaultEnrichTimeout
+}
+
 // ---- Anthropic native implementation ----
 
 // anthropicImpl drives the Anthropic Messages API natively (not OpenAI-compat).
@@ -268,7 +420,7 @@ func NewAnthropic(baseURL, apiKey, model string) *Enricher {
 		baseURL: strings.TrimRight(baseURL, "/"),
 		apiKey:  apiKey,
 		model:   model,
-		client:  &http.Client{Timeout: 120 * time.Second},
+		client:  &http.Client{Timeout: enrichHTTPTimeout()},
 	}}
 }
 

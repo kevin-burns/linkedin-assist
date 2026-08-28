@@ -374,14 +374,15 @@ All state lives under `~/.config/li-assist/`:
 | `LI_ASSIST_DAILY_CAP` | `100` | Max voyager calls per calendar day (fail-fast when exceeded) |
 | `LI_ASSIST_REAUTH_DAYS` | `14` | Session is treated as stale after this many days |
 | `LI_ASSIST_CACHE_MAX_BYTES` | `10485760` | Job cache size cap (10 MB; LRU eviction by oldest last-seen) |
-| `LI_ASSIST_ENRICH_PROVIDER` | (auto) | Force `ollama` \| `openai` \| `gemini` \| `anthropic` \| `none` |
+| `LI_ASSIST_ENRICH_PROVIDER` | (auto) | Force `ollama` \| `openai` \| `gemini` \| `anthropic` \| `openrouter` \| `none` (openrouter is never auto-detected) |
 | `LI_ASSIST_ENRICH_MODEL` | per-provider | Override the chat model |
+| `LI_ASSIST_ENRICH_TIMEOUT` | `120s` | Per-request HTTP timeout. Go duration (`3m`) or plain seconds (`180`). Timeouts, resets and 429/5xx are retried 3× with a 1s/2s/4s backoff |
 | `LI_ASSIST_ENRICH_MAX_PER_RUN` | `25` | Max NEW jobs enriched per `sweep --enrich` (≤0 clamps to default) |
 | `LI_ASSIST_CONNECTIONS_CSV` | — | Path to your Connections.csv export for `--intros` |
 | `LI_ASSIST_OLLAMA_HOST` | `http://localhost:11434` | Ollama base URL |
 | `LI_ASSIST_OLLAMA_AUTOSTART` | `true` | Auto-start `ollama serve` when provider is `ollama` and it's down |
 | `LI_ASSIST_OLLAMA_START_TIMEOUT` | `15s` | How long to wait for Ollama to become ready |
-| `OPENAI_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` | — | Provider keys (read from the environment; never logged) |
+| `OPENAI_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` | — | Provider keys (read from the environment; never logged) |
 
 ---
 

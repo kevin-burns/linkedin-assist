@@ -165,6 +165,7 @@ and notes. Provider-agnostic, auto-detected in this order: **Ollama → OpenAI �
 | `LI_ASSIST_ENRICH_PROVIDER` | force `ollama` / `openai` / `gemini` / `anthropic` / `openrouter` (else auto-detect; **openrouter is never auto-detected**) |
 | `LI_ASSIST_ENRICH_MODEL` | override the model for the chosen provider |
 | `LI_ASSIST_ENRICH_MAX_PER_RUN` | cap on jobs enriched per `sweep --enrich` (default 25) |
+| `LI_ASSIST_ENRICH_TIMEOUT` | per-request HTTP timeout, default `120s`. Go duration (`3m`) or plain seconds (`180`) |
 | `OPENAI_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` | enable the respective API provider |
 
 #### Choosing an OpenRouter model
@@ -196,6 +197,7 @@ runs — otherwise every model appears to return identical output.
 | `google/gemini-3.7-flash` | 5/5 | ~2.5 s | **the default; fast and steady** |
 | `qwen/qwen3.8-flash` | 5/5 | **47 s** | cheaper, ~19× slower, best prose |
 | `qwen/qwen3.8-27b` | 2/5 | 100 s | avoid |
+| `deepseek/deepseek-v4-flash-0731` | 5/5 | **67–477 s** | cheapest tested, and unusable for a sweep — see below |
 | `*:free` variants | 0/3 | — | HTTP 429 on a shared pool |
 
 **Prices are deliberately not listed here — they change, and a stale number in a doc is worse than
@@ -211,6 +213,16 @@ Two things worth knowing before you switch:
 - **`:free` models are not usable here.** `google/gemma-4-26b-a4b-it:free` and `z-ai/glm-5.2:free`
   returned HTTP 429 on *every* attempt against a shared upstream pool. Retry with backoff is built
   in and still lost.
+- **`deepseek/deepseek-v4-flash-0731` answers, eventually.** Every one of five runs returned
+  insights, but the spread on identical input was **67 s to 477 s** — one posting took eight
+  minutes. It returns its 200 promptly and then streams the completion slowly, so the cost lands in
+  the body read and the retry has to absorb it. On a `sweep --enrich` capped at 25 jobs, a handful
+  of unlucky postings adds half an hour. One run also omitted `seniority` entirely. Cheap, and that
+  is what you are paying for.
+
+  *Measured with the transient retry in place. Before it, the same model scored **3/5** — the two
+  failures were the client timeout firing mid-body, which the retry had no way to see.*
+
 - **`qwen/qwen3.8-flash` is the better analyst on a single posting** — it was the only model to spot
   that the ad was a personal first-person note and to name its author, and it extracted the team
   size the others missed. At 47 s it is a "one job you actually care about" choice, never a sweep.

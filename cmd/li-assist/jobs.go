@@ -236,6 +236,11 @@ LI_ASSIST_ENRICH_PROVIDER=openrouter and set OPENROUTER_API_KEY. It defaults
 to google/gemini-3.7-flash. Free :free model variants are rate-limited
 aggressively and are not recommended for this.
 
+Transient failures -- timeouts, connection resets, 429 and 5xx -- are retried
+three times with a 1s/2s/4s backoff. Each attempt gets 120s; raise that with
+LI_ASSIST_ENRICH_TIMEOUT (a Go duration such as "3m", or plain seconds) if a
+model you want reliably needs longer.
+
 Use --intros to surface 1st-degree LinkedIn connections at the job's company
 as warm-intro candidates. Requires a Connections.csv export from LinkedIn
 (Settings → Data Privacy → Get a copy of your data → Connections). This is
