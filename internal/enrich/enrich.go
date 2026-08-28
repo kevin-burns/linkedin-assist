@@ -7,6 +7,7 @@
 // enforces this.
 //
 // Provider priority (auto-detect): Ollama → OpenAI → Gemini → Anthropic.
+// OpenRouter is supported but NOT auto-detected -- see the note in autoDetect.
 // Set LI_ASSIST_ENRICH_PROVIDER to force a specific provider.
 // Set LI_ASSIST_ENRICH_MODEL to override the model name.
 //
@@ -183,9 +184,29 @@ func (o *openAICompatImpl) enrich(ctx context.Context, job domain.Job) (domain.I
 		req.Header.Set("Authorization", "Bearer "+o.apiKey)
 	}
 
-	resp, err := o.client.Do(req)
-	if err != nil {
-		return domain.Insights{}, fmt.Errorf("enrich: http: %w", err)
+	// Retry the transient set with backoff. The status list and the reasoning are
+	// ported from claude-skills/terragrunt-skill/evals/run_model.py, which already
+	// drives OpenRouter and carries the comment "429 is rate limiting, which THE
+	// FREE TIERS DO CONSTANTLY". Without this a single 429 fails an enrichment that
+	// would have succeeded a second later, which on a :free model is the common case
+	// rather than the exceptional one.
+	var resp *http.Response
+	for attempt := 0; ; attempt++ {
+		if attempt > 0 {
+			// Rebuild the body: a Reader is consumed by the previous attempt.
+			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		}
+		resp, err = o.client.Do(req)
+		if err != nil {
+			return domain.Insights{}, fmt.Errorf("enrich: http: %w", err)
+		}
+		if !retryableStatus(resp.StatusCode) || attempt >= maxEnrichRetries {
+			break
+		}
+		_ = resp.Body.Close()
+		// 1s, 2s, 4s. Bounded on purpose -- enrichment is interactive and a caller
+		// waiting a minute for a free model is worse than a soft skip.
+		time.Sleep(time.Duration(1<<attempt) * time.Second)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -209,6 +230,24 @@ func (o *openAICompatImpl) enrich(ctx context.Context, job domain.Job) (domain.I
 	}
 
 	return parseInsights([]byte(result.Choices[0].Message.Content))
+}
+
+// maxEnrichRetries bounds the backoff loop above: 3 retries = 1s + 2s + 4s.
+const maxEnrichRetries = 3
+
+// retryableStatus reports whether a status is worth a second attempt. Same set as
+// run_model.py's RETRY_STATUS.
+func retryableStatus(code int) bool {
+	switch code {
+	case http.StatusRequestTimeout, // 408
+		http.StatusTooManyRequests,     // 429 -- the free-tier case
+		http.StatusInternalServerError, // 500
+		http.StatusBadGateway,          // 502
+		http.StatusServiceUnavailable,  // 503
+		http.StatusGatewayTimeout:      // 504
+		return true
+	}
+	return false
 }
 
 // ---- Anthropic native implementation ----
@@ -393,6 +432,34 @@ const (
 	defaultAnthropicBaseURL = "https://api.anthropic.com"
 	openAIBaseURL           = "https://api.openai.com/v1"
 	geminiBaseURL           = "https://generativelanguage.googleapis.com/v1beta/openai"
+	openRouterBaseURL       = "https://openrouter.ai/api/v1"
+	// Deliberately a PAID model, not a :free one. Benchmarked 2026-08-28 on three
+	// real cached postings, five attempts each on the same posting:
+	//
+	//	openai gpt-5.4-mini          5/5   1,945ms   (paid, the default path)
+	//	google/gemini-3.7-flash      5/5   6,460ms   $0.375/$1.875 per 1M tok
+	//	minimax/minimax-m3:free      4/5   9,550ms
+	//	google/gemma-4-26b-a4b-it:free 0/3  HTTP 429 every attempt
+	//	z-ai/glm-5.2:free            0/3   HTTP 429 every attempt
+	//
+	// The free tier is a false economy here. Two of three candidates were hard
+	// rate-limited on a shared upstream pool ("temporarily rate-limited upstream",
+	// routed via Google AI Studio) and the one that worked was both slower and less
+	// reliable than a paid model costing fractions of a cent per posting.
+	// Enrichment is opt-in and per-posting, so the bill is bounded by hand.
+	//
+	// Gemini 3.7 Flash also gave the most specific output of the three that ran --
+	// naming prompt injection and data leaks where gpt-5.4-mini said "threat
+	// modeling" -- and carries a 1M context, which job ads never approach but
+	// removes truncation as a failure mode entirely.
+	//
+	// COST, measured from the real cache rather than guessed: an average posting is
+	// ~4,400 chars of description (~1,350 prompt tokens) and yields ~1,200 chars of
+	// insights (~300 output tokens). At the rates above that is $0.00107 per
+	// posting -- 11 cents per 100, $1.07 per 1,000. Enriching a whole 3,500-row
+	// cache would cost under $4. The listed rate is itself a promotional discount
+	// (Google AI Studio list is ~$1.50 in), so treat it as a floor that may rise.
+	defaultOpenRouterModel = "google/gemini-3.7-flash"
 )
 
 // NewFromEnv constructs an Enricher by reading environment variables.
@@ -437,6 +504,28 @@ func NewFromEnv() (*Enricher, error) {
 			m = defaultGeminiModel
 		}
 		return NewOpenAICompat(geminiBaseURL, key, m), nil
+	case "openrouter":
+		// OPENROUTER_API_KEY is absent from non-interactive shells -- it lives in
+		// ~/.config/dotfiles/env.sh. Fail here rather than letting the request go
+		// out unauthenticated and come back as a confusing 401.
+		//
+		// The wrap is ErrNoProvider on purpose, so a missing key stays a SOFT SKIP
+		// like every other absent provider. The consequence, verified rather than
+		// assumed: callers in cmd/li-assist/jobs.go match on IsErrNoProvider and
+		// print their own message, so the detail below never reaches a user. That
+		// generic message now names OPENROUTER_API_KEY too, which is what actually
+		// tells someone what to set.
+		key := os.Getenv("OPENROUTER_API_KEY")
+		if key == "" {
+			return nil, fmt.Errorf("enrich: OPENROUTER_API_KEY is not set "+
+				"(it is absent from non-interactive shells; "+
+				"run: source ~/.config/dotfiles/env.sh): %w", ErrNoProvider)
+		}
+		m := model
+		if m == "" {
+			m = defaultOpenRouterModel
+		}
+		return NewOpenAICompat(openRouterBaseURL, key, m), nil
 	case "anthropic":
 		key := os.Getenv("ANTHROPIC_API_KEY")
 		m := model
@@ -460,6 +549,16 @@ func autoDetect(ollamaHost, model string) (*Enricher, error) {
 		return NewOpenAICompat(ollamaHost+"/v1", "", m), nil
 	}
 
+	// OpenRouter is deliberately ABSENT from auto-detect. It was added here briefly
+	// on 2026-08-28 and reverted the same day: auto-detect exists to pick something
+	// that works without being asked, and inserting OpenRouter ahead of OpenAI would
+	// have made every enrichment slower (6,460ms vs 1,945ms measured) to no benefit,
+	// while silently moving traffic to a different vendor.
+	//
+	// Reach for it explicitly with LI_ASSIST_ENRICH_PROVIDER=openrouter, which is
+	// the honest interface for "use this other vendor" -- there is no way to infer
+	// that intent from the mere presence of a key.
+	//
 	// 2. OpenAI.
 	if key := os.Getenv("OPENAI_API_KEY"); key != "" {
 		m := model

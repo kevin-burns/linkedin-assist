@@ -371,7 +371,7 @@ func enrichJobWithCache(ctx context.Context, job domain.Job, getCache usecase.Jo
 	if err != nil {
 		if enrich.IsErrNoProvider(err) {
 			fmt.Fprintln(os.Stderr,
-				"enrich: no provider configured (set OPENAI_API_KEY / GEMINI_API_KEY / ANTHROPIC_API_KEY or run Ollama); skipping")
+				"enrich: no provider configured (set OPENAI_API_KEY / GEMINI_API_KEY / ANTHROPIC_API_KEY / OPENROUTER_API_KEY or run Ollama); skipping")
 		} else {
 			fmt.Fprintf(os.Stderr, "enrich: provider setup failed: %v; skipping\n", err)
 		}
@@ -563,7 +563,7 @@ Requires an active login session (run 'li-assist auth login' first).`,
 				if enricherErr != nil {
 					if enrich.IsErrNoProvider(enricherErr) {
 						fmt.Fprintln(os.Stderr,
-							"enrich: no provider configured (set OPENAI_API_KEY / GEMINI_API_KEY / ANTHROPIC_API_KEY or run Ollama); skipping enrichment")
+							"enrich: no provider configured (set OPENAI_API_KEY / GEMINI_API_KEY / ANTHROPIC_API_KEY / OPENROUTER_API_KEY or run Ollama); skipping enrichment")
 					} else {
 						fmt.Fprintf(os.Stderr, "enrich: provider setup failed: %v; skipping enrichment\n", enricherErr)
 					}
