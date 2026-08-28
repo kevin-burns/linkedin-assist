@@ -158,11 +158,11 @@ optional `insights` block:
 
 LLM analysis that de-markets a job description into structured `insights`: the real summary,
 the genuinely *required* skills, salary (verbatim if stated), seniority, a condensed description,
-and notes. Provider-agnostic, auto-detected in this order: **Ollama → OpenAI → Gemini → Anthropic**.
+and notes. Provider-agnostic, auto-detected in this order: **Ollama → OpenAI → Gemini → Anthropic**. **OpenRouter is available but deliberately not auto-detected** — reach for it with `LI_ASSIST_ENRICH_PROVIDER=openrouter`, which defaults to `google/gemini-3.7-flash`. Override any provider's model with `LI_ASSIST_ENRICH_MODEL`.
 
 | Env var | Effect |
 |---|---|
-| `LI_ASSIST_ENRICH_PROVIDER` | force `ollama` / `openai` / `gemini` / `anthropic` (else auto-detect) |
+| `LI_ASSIST_ENRICH_PROVIDER` | force `ollama` / `openai` / `gemini` / `anthropic` / `openrouter` (else auto-detect; **openrouter is never auto-detected**) |
 | `LI_ASSIST_ENRICH_MODEL` | override the model for the chosen provider |
 | `LI_ASSIST_ENRICH_MAX_PER_RUN` | cap on jobs enriched per `sweep --enrich` (default 25) |
 | `OPENAI_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` | enable the respective API provider |
