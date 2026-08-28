@@ -165,7 +165,59 @@ and notes. Provider-agnostic, auto-detected in this order: **Ollama → OpenAI �
 | `LI_ASSIST_ENRICH_PROVIDER` | force `ollama` / `openai` / `gemini` / `anthropic` / `openrouter` (else auto-detect; **openrouter is never auto-detected**) |
 | `LI_ASSIST_ENRICH_MODEL` | override the model for the chosen provider |
 | `LI_ASSIST_ENRICH_MAX_PER_RUN` | cap on jobs enriched per `sweep --enrich` (default 25) |
-| `OPENAI_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` | enable the respective API provider |
+| `OPENAI_API_KEY` / `GEMINI_API_KEY` / `ANTHROPIC_API_KEY` / `OPENROUTER_API_KEY` | enable the respective API provider |
+
+#### Choosing an OpenRouter model
+
+OpenRouter exposes hundreds of models behind one key, so `LI_ASSIST_ENRICH_MODEL` is how you pick
+one. The model id is the full OpenRouter slug, including any `:free` suffix:
+
+```bash
+export OPENROUTER_API_KEY=...          # absent from non-interactive shells; source your env file
+export LI_ASSIST_ENRICH_PROVIDER=openrouter
+
+li-assist jobs get <urn> --enrich                                   # default: google/gemini-3.7-flash
+LI_ASSIST_ENRICH_MODEL=qwen/qwen3.8-flash li-assist jobs get <urn> --enrich
+LI_ASSIST_ENRICH_MODEL=openai/gpt-5.4-mini li-assist jobs get <urn> --enrich
+```
+
+Browse ids at <https://openrouter.ai/models>. `curl -s https://openrouter.ai/api/v1/models` returns
+every id with its context length and per-token price, and needs no key.
+
+**Enrichment is enrich-once.** Cached insights are reused for a posting whatever model you name,
+and `--refresh` re-fetches the *posting* without re-running the LLM. To genuinely compare models on
+the same job, delete that row's `insights` key from `~/.config/li-assist/cache/jobs.jsonl` between
+runs — otherwise every model appears to return identical output.
+
+**Measured 2026-08-28**, five runs each on one real 19k-character posting:
+
+| model | ok | latency | verdict |
+|---|---|---|---|
+| `google/gemini-3.7-flash` | 5/5 | ~2.5 s | **the default; fast and steady** |
+| `qwen/qwen3.8-flash` | 5/5 | **47 s** | cheaper, ~19× slower, best prose |
+| `qwen/qwen3.8-27b` | 2/5 | 100 s | avoid |
+| `*:free` variants | 0/3 | — | HTTP 429 on a shared pool |
+
+**Prices are deliberately not listed here — they change, and a stale number in a doc is worse than
+no number.** `curl -s https://openrouter.ai/api/v1/models` returns the current price for every id.
+
+For a sense of scale at the time of writing (2026-08-28): the default worked out at roughly
+**$0.001 per posting**, about **$1 per thousand** — an average ad is ~1,350 prompt and ~300 output
+tokens. The Qwen Flash variant was cheaper still and the 27b slightly dearer. Enrichment is opt-in
+and per-posting, so on any of them the bill is bounded by how often you ask for it.
+
+Two things worth knowing before you switch:
+
+- **`:free` models are not usable here.** `google/gemma-4-26b-a4b-it:free` and `z-ai/glm-5.2:free`
+  returned HTTP 429 on *every* attempt against a shared upstream pool. Retry with backoff is built
+  in and still lost.
+- **`qwen/qwen3.8-flash` is the better analyst on a single posting** — it was the only model to spot
+  that the ad was a personal first-person note and to name its author, and it extracted the team
+  size the others missed. At 47 s it is a "one job you actually care about" choice, never a sweep.
+
+**Do not filter on `seniority`.** It is not stable: on identical input `qwen3.8-flash` returned
+three different values across five runs and `gemini-3.7-flash` returned two. Display it; derive
+seniority from the title if you need to gate on it.
 
 Auto-detect uses Ollama if reachable, else the first API key present. With no provider, enrichment
 is **skipped gracefully** (a note to stderr) and the command still succeeds — never treat a missing
