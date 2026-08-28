@@ -121,14 +121,38 @@ def _company_name(row) -> str:
     return name if isinstance(name, str) else ""
 
 
-def _is_excluded(row, exclude_companies_lower) -> bool:
+def _row_title(row) -> str:
+    """row -> title, or "" for anything that is not a string. Cache rows have
+    carried non-string fields before; see the posted_at note in `_cells`."""
+    title = row.get("title")
+    return title if isinstance(title, str) else ""
+
+
+def _is_excluded(row, exclude_companies_lower, exclude_titles_lower=()) -> bool:
     """Case-insensitive substring match, both sides lowered. The cache
-    predates config changes -- a company added to exclude_company after
-    those rows were cached would otherwise still show up here."""
-    if not exclude_companies_lower:
-        return False
+    predates config changes -- a company added to exclude_company, OR a term
+    added to exclude_title, after those rows were cached would otherwise still
+    show up here.
+
+    THE TITLE HALF WAS MISSING UNTIL 2026-08-28, and it cost more than it
+    looked. li-digest filters titles at FETCH time by passing --exclude-title
+    to `li-assist jobs sweep`, which does nothing for rows already cached. So
+    rows matching `junior` and `werkstudent` -- terms that had been in
+    exclude_title for weeks -- kept rendering, and read as ordinary noise
+    rather than as a bug. Eight such rows were purged by hand before this fix.
+
+    Semantics are deliberately IDENTICAL to the fetch-time filter that
+    li-assist documents for --exclude-title: case-insensitive substring. If
+    the two ever disagree, that is worse than having only one of them.
+
+    exclude_titles_lower defaults to () so the older two-argument call is
+    still valid -- there is one in the wild, in a test.
+    """
     name = _company_name(row).lower()
-    return any(term in name for term in exclude_companies_lower)
+    if any(term in name for term in exclude_companies_lower):
+        return True
+    title = _row_title(row).lower()
+    return any(term in title for term in exclude_titles_lower)
 
 
 def _sort_date(row) -> str:
@@ -163,7 +187,8 @@ def _sort_date(row) -> str:
 def select_rows(raw_rows, config: "li_digest.Config", window: int, today=None) -> list:
     """Cache rows -> enriched, filtered, sorted report rows.
 
-    Applies exclude_company, enriches via li_digest (archetypes/link/
+    Applies exclude_company AND exclude_title, enriches via li_digest
+    (archetypes/link/
     bucket), then keeps everything except the `old` bucket -- in-window and
     undated rows both stay, since a missing posting date is not evidence a
     job is stale. No `last_run` is passed through to enrich_rows: li-report
@@ -175,7 +200,11 @@ def select_rows(raw_rows, config: "li_digest.Config", window: int, today=None) -
     happens to run.
     """
     exclude_lower = tuple(t.lower() for t in config.exclude_companies)
-    filtered = [r for r in raw_rows if not _is_excluded(r, exclude_lower)]
+    exclude_titles_lower = tuple(t.lower() for t in config.exclude_titles)
+    filtered = [
+        r for r in raw_rows
+        if not _is_excluded(r, exclude_lower, exclude_titles_lower)
+    ]
     cutoff = li_digest.cutoff_date(window, today)
     enriched = li_digest.enrich_rows(filtered, config, cutoff)
     kept = [r for r in enriched if r.get("bucket") != "old"]
@@ -351,7 +380,9 @@ def render_html(rows, config: "li_digest.Config", window: int, generated_at: str
     out.append(
         "<footer>Source: ~/.config/li-assist/cache/jobs.jsonl (li-assist, read-only). "
         f"Archetypes: {_esc(', '.join(a.name for a in config.archetypes))}. "
-        f"Excluded: {_esc(', '.join(config.exclude_companies) or 'none')}.<br>"
+        f"Excluded: {_esc(', '.join(config.exclude_companies) or 'none')} "
+        f"({len(config.exclude_titles)} title term"
+        f"{'' if len(config.exclude_titles) == 1 else 's'} also applied).<br>"
         "Workplace shows <em>unknown</em> where it genuinely is: <code>jobs get</code> drops the "
         "marker that <code>jobs sweep</code> carries and overwrites the cached row.<br>"
         "Self-contained &mdash; inline CSS/JS, no CDN, opens with no network.</footer>"

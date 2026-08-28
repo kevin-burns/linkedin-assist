@@ -183,6 +183,59 @@ class TestSelectRows(ReportTempDir):
         kept = li_report.select_rows(rows, cfg, 14, today=self.today)
         self.assertEqual([r["urn"] for r in kept], ["urn:li:fsd_jobPosting:2"])
 
+    def test_excluded_title_is_dropped_case_insensitively(self):
+        """The sibling of the company test above, and it was missing.
+
+        li-digest filters titles at FETCH time by passing --exclude-title to
+        `li-assist jobs sweep`, which does nothing for rows already in the
+        cache. Measured 2026-08-28: rows matching `junior` and `werkstudent`
+        -- terms that had been in exclude_title for weeks -- were still
+        rendering, because only exclude_company was applied here.
+        """
+        data = json.loads(json.dumps(GOOD_CONFIG))
+        data["defaults"]["exclude_title"] = ["ai trainer", "JUNIOR"]
+        cfg = li_digest.load_config(self.write_config(data, "extitle.json"))
+        rows = [
+            cache_job("1", "Platform Engineer - AI Trainer (Freelance)"),
+            cache_job("2", "Junior Platform Engineer"),
+            cache_job("3", "Senior Platform Engineer"),
+        ]
+        kept = li_report.select_rows(rows, cfg, 14, today=self.today)
+        self.assertEqual([r["urn"] for r in kept], ["urn:li:fsd_jobPosting:3"])
+
+    def test_title_and_company_exclusions_apply_together(self):
+        """Neither list may shadow the other."""
+        data = json.loads(json.dumps(GOOD_CONFIG))
+        data["defaults"]["exclude_title"] = ["ai trainer"]
+        data["defaults"]["exclude_company"] = ["acme"]
+        cfg = li_digest.load_config(self.write_config(data, "exboth.json"))
+        rows = [
+            cache_job("1", "AI Trainer", company="Globex"),
+            cache_job("2", "Platform Engineer", company="ACME Corp"),
+            cache_job("3", "Platform Engineer", company="Globex"),
+        ]
+        kept = li_report.select_rows(rows, cfg, 14, today=self.today)
+        self.assertEqual([r["urn"] for r in kept], ["urn:li:fsd_jobPosting:3"])
+
+    def test_empty_exclude_title_keeps_everything(self):
+        """A guard that blocks when unconfigured is worse than no guard."""
+        data = json.loads(json.dumps(GOOD_CONFIG))
+        data["defaults"]["exclude_title"] = []
+        cfg = li_digest.load_config(self.write_config(data, "exnone.json"))
+        rows = [cache_job("1", "AI Trainer"), cache_job("2", "Platform Engineer")]
+        kept = li_report.select_rows(rows, cfg, 14, today=self.today)
+        self.assertEqual(len(kept), 2)
+
+    def test_row_with_no_title_does_not_raise(self):
+        """Cache rows have carried non-string fields before -- see the
+        posted_at test below. A missing title must not crash the render."""
+        data = json.loads(json.dumps(GOOD_CONFIG))
+        data["defaults"]["exclude_title"] = ["ai trainer"]
+        cfg = li_digest.load_config(self.write_config(data, "exnotitle.json"))
+        rows = [cache_job("1", "Platform Engineer")]
+        rows[0]["title"] = None
+        li_report.select_rows(rows, cfg, 14, today=self.today)
+
     def test_mixed_string_and_non_string_posted_at_does_not_raise(self):
         """A cache with a non-string posted_at (e.g. an int, which real
         cache data has produced before -- see li_digest's own comment on
