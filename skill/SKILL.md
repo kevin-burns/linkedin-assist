@@ -191,15 +191,20 @@ runs — otherwise every model appears to return identical output.
 
 **Measured 2026-08-28**, five runs each on one real 19k-character posting:
 
-| model | ok | latency | price /1M in→out | verdict |
-|---|---|---|---|---|
-| `google/gemini-3.7-flash` | 5/5 | ~2.5 s | $0.375 → $1.875 | **the default; fast and steady** |
-| `qwen/qwen3.8-flash` | 5/5 | **47 s** | $0.15 → $0.47 | cheapest, ~19× slower, best prose |
-| `qwen/qwen3.8-27b` | 2/5 | 100 s | $0.425 → $2.55 | avoid |
-| `*:free` variants | 0/3 | — | free | HTTP 429 on a shared pool |
+| model | ok | latency | verdict |
+|---|---|---|---|
+| `google/gemini-3.7-flash` | 5/5 | ~2.5 s | **the default; fast and steady** |
+| `qwen/qwen3.8-flash` | 5/5 | **47 s** | cheaper, ~19× slower, best prose |
+| `qwen/qwen3.8-27b` | 2/5 | 100 s | avoid |
+| `*:free` variants | 0/3 | — | HTTP 429 on a shared pool |
 
-Roughly **$0.001 per posting** on the default — an average ad is ~1,350 prompt and ~300 output
-tokens, so about **$1 per thousand**.
+**Prices are deliberately not listed here — they change, and a stale number in a doc is worse than
+no number.** `curl -s https://openrouter.ai/api/v1/models` returns the current price for every id.
+
+For a sense of scale at the time of writing (2026-08-28): the default worked out at roughly
+**$0.001 per posting**, about **$1 per thousand** — an average ad is ~1,350 prompt and ~300 output
+tokens. The Qwen Flash variant was cheaper still and the 27b slightly dearer. Enrichment is opt-in
+and per-posting, so on any of them the bill is bounded by how often you ask for it.
 
 Two things worth knowing before you switch:
 
