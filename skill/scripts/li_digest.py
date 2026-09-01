@@ -21,6 +21,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import sys
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta, timezone
@@ -71,6 +72,27 @@ AUTH_PATTERN = re.compile(
 #     falls through the same `status >= 400` branch as
 #     "returned HTTP 999: <snippet>"; \b999\b is a defensive backstop in
 #     case the wrapper wording ever changes but the numeral survives.
+# Transient transport failures: the browser lost the network mid-navigation, a page
+# did not load, a deadline passed. These are worth exactly ONE retry.
+#
+# Observed live 2026-09-01: the `em` archetype -- engineering management, the primary
+# target lane -- failed with net::ERR_NETWORK_CHANGED while thirteen others succeeded
+# around it. The digest prints a delta, so nothing was lost, only delayed to the next
+# successful run; but the runs that fail are the slow battery mornings, so the delay
+# lands on the most valuable lane.
+#
+# Auth and rate-limit failures are deliberately NOT here. They escape as their own
+# exception types before the retry can see them, and retrying a dead session spends
+# another call while delaying the re-login warning the user actually needs.
+TRANSIENT_PATTERN = re.compile(
+    r"net::ERR_|page load error|context deadline exceeded|connection reset|"
+    r"connection refused|broken pipe|\bi/o timeout\b|\bEOF\b|"
+    r"temporary failure in name resolution|no such host|TLS handshake timeout",
+    re.IGNORECASE,
+)
+
+RETRY_BACKOFF_SECONDS = 5.0
+
 RATE_LIMIT_PATTERN = re.compile(
     r"rate limited|daily cap exceeded|\b429\b|\b999\b|returned HTTP 40[13]",
     re.IGNORECASE,
@@ -327,7 +349,25 @@ def run_sweep(archetype: Archetype, config: Config, run=subprocess.run, log=None
     return data
 
 
-def collect(config: Config, run=subprocess.run, log=None):
+def sweep_with_retry(archetype: Archetype, config: Config, run=subprocess.run,
+                     log=None, sleep=time.sleep) -> list:
+    """One archetype, retried ONCE on a transient transport failure.
+
+    AuthError and RateLimitError are not caught here: a dead session or a block
+    fails every archetype identically, and a retry only spends another call.
+    """
+    try:
+        return run_sweep(archetype, config, run, log)
+    except RuntimeError as exc:
+        if not TRANSIENT_PATTERN.search(str(exc)):
+            raise
+        log(f"li-digest: archetype '{archetype.name}' hit a transient error "
+            f"({exc}) — retrying once in {RETRY_BACKOFF_SECONDS:g}s")
+        sleep(RETRY_BACKOFF_SECONDS)
+        return run_sweep(archetype, config, run, log)
+
+
+def collect(config: Config, run=subprocess.run, log=None, sleep=time.sleep):
     """Sweep every archetype sequentially. Returns (rows, failed_names).
 
     NEVER parallelise this loop: a burst of automated requests is exactly what
@@ -342,7 +382,7 @@ def collect(config: Config, run=subprocess.run, log=None):
     for index, archetype in enumerate(config.archetypes):
         log(f"li-digest: sweeping {archetype.name}…")
         try:
-            jobs = run_sweep(archetype, config, run, log)
+            jobs = sweep_with_retry(archetype, config, run, log, sleep)
         except AuthError:
             raise
         except RuntimeError as exc:

@@ -1733,3 +1733,106 @@ class TestQueryMatchParity(ConfigTempDir):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SequenceRunner:
+    """Like FakeRunner, but a query may map to a LIST of results consumed in
+    order — which is the only way to express "failed, then succeeded on retry"."""
+
+    def __init__(self, by_query):
+        self.by_query = {k: list(v) if isinstance(v, list) else [v]
+                         for k, v in by_query.items()}
+        self.calls = []
+
+    def __call__(self, cmd, capture_output=True, text=True, check=False):
+        self.calls.append(cmd)
+        for needle, procs in self.by_query.items():
+            if any(needle in part for part in cmd):
+                return procs.pop(0) if len(procs) > 1 else procs[0]
+        return FakeProc()
+
+
+class RetryOnTransientErrors(ConfigTempDir):
+    """A network blip must not silently drop an archetype for a whole run.
+
+    Observed live 2026-09-01: the `em` archetype -- engineering management, the
+    primary target lane -- failed with net::ERR_NETWORK_CHANGED while thirteen
+    others succeeded around it. The digest prints a delta, so the postings were
+    not lost, only delayed until the next successful run; but the runs that fail
+    are the slow battery mornings, so the delay lands on the best lane.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.cfg = li_digest.load_config(self.write_config(GOOD_CONFIG))
+        self.logs = []
+        self.slept = []
+
+    def _collect(self, runner):
+        return li_digest.collect(self.cfg, run=runner, log=self.logs.append,
+                                 sleep=self.slept.append)
+
+    def test_a_transient_network_error_is_retried_once_and_can_succeed(self):
+        real = ("exit 1: jobs sweep: sweep search: jobs repo search: voyager jobs search "
+                "get: prepare session origin: navigate to linkedin origin: page load error "
+                "net::ERR_NETWORK_CHANGED")
+        runner = SequenceRunner({
+            "platform engineer": [FakeProc("", real, 1),
+                                  FakeProc(json.dumps(PLATFORM_JOBS))],
+            "engineering manager": FakeProc(json.dumps(EM_JOBS)),
+        })
+        rows, failed = self._collect(runner)
+        self.assertEqual(failed, [])
+        self.assertTrue(any("retrying once" in m for m in self.logs))
+        self.assertEqual(len(self.slept), 1)
+        self.assertGreater(len(rows), 0)
+
+    def test_a_retry_that_also_fails_is_recorded_as_one_failure(self):
+        real = "exit 1: page load error net::ERR_NETWORK_CHANGED"
+        runner = SequenceRunner({
+            "platform engineer": [FakeProc("", real, 1), FakeProc("", real, 1)],
+            "engineering manager": FakeProc(json.dumps(EM_JOBS)),
+        })
+        rows, failed = self._collect(runner)
+        self.assertEqual(failed, ["platform"])
+        self.assertEqual(len(rows), 2)
+
+    def test_a_non_transient_failure_is_not_retried(self):
+        """An ordinary error is not a blip. Retrying it spends a call for nothing
+        and delays the failure the user needs to see."""
+        runner = SequenceRunner({
+            "platform engineer": [FakeProc("", "boom", 1),
+                                  FakeProc(json.dumps(PLATFORM_JOBS))],
+            "engineering manager": FakeProc(json.dumps(EM_JOBS)),
+        })
+        rows, failed = self._collect(runner)
+        self.assertEqual(failed, ["platform"])
+        self.assertEqual(self.slept, [])
+
+    def test_a_dead_session_is_never_retried(self):
+        """Auth failures escape as AuthError and must not be slept on: retrying a
+        dead session spends another call and delays the re-login warning."""
+        runner = SequenceRunner({
+            "platform engineer": FakeProc("", "authentication failed: re-run li-assist auth login", 1),
+        })
+        with self.assertRaises(li_digest.AuthError):
+            self._collect(runner)
+        self.assertEqual(self.slept, [])
+
+    def test_a_rate_limit_is_never_retried(self):
+        runner = SequenceRunner({
+            "platform engineer": FakeProc("", "rate limited", 1),
+        })
+        with self.assertRaises((li_digest.RateLimitError, li_digest.AuthError)):
+            self._collect(runner)
+        self.assertEqual(self.slept, [])
+
+    def test_unparseable_output_is_not_treated_as_transient(self):
+        runner = SequenceRunner({
+            "platform engineer": [FakeProc("<html>not json</html>"),
+                                  FakeProc(json.dumps(PLATFORM_JOBS))],
+            "engineering manager": FakeProc(json.dumps(EM_JOBS)),
+        })
+        rows, failed = self._collect(runner)
+        self.assertEqual(failed, ["platform"])
+        self.assertEqual(self.slept, [])
