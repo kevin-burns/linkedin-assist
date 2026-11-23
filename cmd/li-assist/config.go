@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -69,7 +70,7 @@ func saveConfig(path string, cfg appConfig) error {
 		return fmt.Errorf("create config dir: %w", err)
 	}
 
-	raw, err := json.MarshalIndent(cfg, "", "  ")
+	raw, err := json.Marshal(cfg, jsontext.WithIndent("  "), json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}

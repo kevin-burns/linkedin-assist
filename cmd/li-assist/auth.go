@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"math"
 	"os"
@@ -120,9 +121,11 @@ func printStatusJSON(creds auth.Credentials, credsLoaded bool, profileDir string
 		out.AgeDays = math.Round(age.Hours()/24*10) / 10
 		out.Stale = stale
 	}
-	enc := json.NewEncoder(os.Stdout)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(out); err != nil {
+	raw, err := json.Marshal(out, jsontext.WithIndent("  "), json.Deterministic(true))
+	if err != nil {
+		return fmt.Errorf("encode status JSON: %w", err)
+	}
+	if _, err := os.Stdout.Write(append(raw, '\n')); err != nil {
 		return fmt.Errorf("encode status JSON: %w", err)
 	}
 	return nil

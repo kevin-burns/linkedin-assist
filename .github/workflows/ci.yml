@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go: ['1.26']
+        go: ['1.27']
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -27,7 +27,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
-          # check-latest resolves the newest 1.26.x rather than the toolchain
+          # check-latest resolves the newest 1.27.x rather than the toolchain
           # baked into the runner image, which lags. On 2026-08-19 the image
           # still carried go1.26.5 and govulncheck failed the build on four
           # stdlib advisories (GO-2026-6218, -6090, -5972, -5026), every
@@ -55,22 +55,38 @@ jobs:
   # a ModuleNotFoundError rather than passing silently on a pre-populated runner.
   skill-scripts:
     name: skill scripts (python ${{ matrix.python }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         # Oldest and newest supported, plus the two in between that the suite
         # has actually been run against. 3.9 is the floor: it is what macOS
         # ships as /usr/bin/python3, and nothing older has ever been tested.
-        python: ['3.9', '3.10', '3.13', '3.14']
+        #
+        # 3.9 runs on macOS against that system interpreter, which is the
+        # environment the floor exists for. ubuntu-latest moved to 26.04 in
+        # November 2026 and setup-python has no 3.9 build for it.
+        include:
+          - { python: '3.9', os: macos-latest, system: true }
+          - { python: '3.10', os: ubuntu-latest, system: false }
+          - { python: '3.13', os: ubuntu-latest, system: false }
+          - { python: '3.14', os: ubuntu-latest, system: false }
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
       - name: Set up Python
+        if: ${{ !matrix.system }}
         uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
+
+      - name: Use the system Python (macOS /usr/bin/python3)
+        if: ${{ matrix.system }}
+        run: |
+          /usr/bin/python3 -c 'import sys; v = "%d.%d" % sys.version_info[:2]; print(sys.version); assert v == "${{ matrix.python }}", "system python is " + v'
+          mkdir -p "$RUNNER_TEMP/syspy" && ln -sf /usr/bin/python3 "$RUNNER_TEMP/syspy/python"
+          echo "$RUNNER_TEMP/syspy" >> "$GITHUB_PATH"
 
       - name: Unit tests
         run: python -m unittest discover -s skill/scripts/tests -v
@@ -85,8 +101,8 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
-          # check-latest resolves the newest 1.26.x rather than the toolchain
+          go-version: '1.27'
+          # check-latest resolves the newest 1.27.x rather than the toolchain
           # baked into the runner image, which lags. On 2026-08-19 the image
           # still carried go1.26.5 and govulncheck failed the build on four
           # stdlib advisories (GO-2026-6218, -6090, -5972, -5026), every
@@ -101,7 +117,7 @@ jobs:
         with:
           # Pinned to match the prek hook (.pre-commit-config.yaml). Bump both
           # together; `latest` here would silently drift from local.
-          version: v2.13.1
+          version: v2.15.0
 
       - name: gosec (Go SAST)
         # Exclude set MUST match .golangci.yml gosec.excludes + the Makefile

@@ -1,6 +1,6 @@
 module github.com/kevin-burns/linkedin-assist
 
-go 1.26
+go 1.27.4
 
 require (
 	github.com/chromedp/cdproto v0.157.9

@@ -22,7 +22,8 @@ package ratelimit
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -210,7 +211,7 @@ func (l *Limiter) loadCount(today string) (int, error) {
 // saveCount atomically writes the counter file (tmp + rename, mode 0600).
 func (l *Limiter) saveCount(today string, count int) error {
 	rec := usageRecord{Date: today, Count: count}
-	data, err := json.MarshalIndent(rec, "", "  ")
+	data, err := json.Marshal(rec, jsontext.WithIndent("  "), json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("marshal usage: %w", err)
 	}
