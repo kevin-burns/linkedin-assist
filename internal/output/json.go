@@ -3,7 +3,8 @@
 package output
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 
 	"github.com/kevin-burns/linkedin-assist/internal/domain"
@@ -121,7 +122,7 @@ func JobsJSON(jobs []domain.Job) ([]byte, error) {
 		}
 		out = append(out, rec)
 	}
-	return json.MarshalIndent(out, "", "  ")
+	return json.Marshal(out, jsontext.WithIndent("  "), json.Deterministic(true))
 }
 
 // JobsOKF serialises jobs to the Ogham Knowledge Format bundle.
@@ -162,7 +163,7 @@ func JobsJSONWithIntros(jobs []domain.Job, introsByURN map[string][]domain.Intro
 		}
 		out = append(out, rec)
 	}
-	return json.MarshalIndent(out, "", "  ")
+	return json.Marshal(out, jsontext.WithIndent("  "), json.Deterministic(true))
 }
 
 // JobsDetailJSON serialises a slice of domain.Job values with full posting
@@ -212,7 +213,7 @@ func JobsDetailJSONWithIntros(jobs []domain.Job, insights map[string]*domain.Ins
 		}
 		out = append(out, rec)
 	}
-	return json.MarshalIndent(out, "", "  ")
+	return json.Marshal(out, jsontext.WithIndent("  "), json.Deterministic(true))
 }
 
 // JobJSON serialises a single domain.Job with its full posting detail to
@@ -252,5 +253,5 @@ func JobJSONWithIntros(job domain.Job, ins *domain.Insights, intros []domain.Int
 	if !job.PostedAt().IsZero() {
 		rec.PostedAt = job.PostedAt().UTC().Format("2006-01-02T15:04:05Z07:00")
 	}
-	return json.MarshalIndent(rec, "", "  ")
+	return json.Marshal(rec, jsontext.WithIndent("  "), json.Deterministic(true))
 }

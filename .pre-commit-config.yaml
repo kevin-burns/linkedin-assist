@@ -27,6 +27,10 @@ repos:
     # (.github/workflows/ci.yml). Bump both together to avoid drift.
     # Run `pre-commit autoupdate` + edit CI in one go.
     #
+    # v2.15.0 (built with go1.27.2), bumped 2026-11-23 with the move to go 1.27.4:
+    # v2.13.1 could not read Go 1.27.4 export data ("export data version 5 is
+    # greater than maximum supported version 4").
+    #
     # v2.13.1, built with Go 1.27. Bumped 2026-08-28 because v2.12.2 was built
     # with Go 1.26 and PANICKED on any Go commit once Go 1.27.0 was installed
     # locally: "file requires newer Go version go1.27 (application built with
@@ -34,7 +38,7 @@ repos:
     # type checker cannot parse 1.27's math/rand/v2. CI stayed green throughout
     # because it pins Go 1.26 -- the failure was local-only, which is exactly
     # how a skipped hook becomes permanent.
-    rev: v2.13.1
+    rev: v2.15.0
     hooks:
       # golangci-lint-full = `golangci-lint run` over the WHOLE module, matching
       # CI. The default `golangci-lint` id runs `--new-from-rev HEAD`, which only

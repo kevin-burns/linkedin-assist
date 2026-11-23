@@ -38,7 +38,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -473,7 +473,7 @@ func (a *anthropicImpl) enrich(ctx context.Context, job domain.Job) (domain.Insi
 			Text string `json:"text"`
 		} `json:"content"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := json.UnmarshalRead(resp.Body, &result); err != nil {
 		return domain.Insights{}, fmt.Errorf("enrich: decode response: %w", err)
 	}
 	// Iterate to find the first text-type block; Anthropic may include other
