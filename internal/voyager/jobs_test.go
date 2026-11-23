@@ -482,3 +482,33 @@ func TestJobsClientGet_Integration(t *testing.T) {
 		t.Error("job title is empty")
 	}
 }
+
+// LinkedIn switched the search card variant from JOBS_SEARCH to
+// SEMANTIC_SEARCH around 2026-11-20 (live capture, 2026-11-23:
+// urn:li:fsd_jobPostingCard:(4492903323,SEMANTIC_SEARCH)). The parser only
+// accepted ",JOBS_SEARCH)", so every search returned 0 jobs while the
+// response held them all. Any card variant must parse; only the JOB_DETAILS
+// prefetch stubs are skipped.
+func TestParseJobsSearch_SemanticSearchVariant(t *testing.T) {
+	body, err := os.ReadFile("testdata/voyager/jobs-search/response.json")
+	if err != nil {
+		t.Fatalf("failed to read corpus: %v", err)
+	}
+	want, err := parseJobsSearch(body)
+	if err != nil || len(want) == 0 {
+		t.Fatalf("baseline parse: %d jobs, err %v", len(want), err)
+	}
+	semantic := []byte(strings.ReplaceAll(string(body), ",JOBS_SEARCH)", ",SEMANTIC_SEARCH)"))
+	got, err := parseJobsSearch(semantic)
+	if err != nil {
+		t.Fatalf("parseJobsSearch: %v", err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("SEMANTIC_SEARCH cards: got %d jobs, want %d", len(got), len(want))
+	}
+	for i := range want {
+		if got[i].URN() != want[i].URN() || got[i].Title() != want[i].Title() {
+			t.Errorf("job %d: got %v %q, want %v %q", i, got[i].URN(), got[i].Title(), want[i].URN(), want[i].Title())
+		}
+	}
+}

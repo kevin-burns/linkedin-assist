@@ -217,8 +217,11 @@ func parseJobsSearch(body []byte) ([]domain.Job, error) {
 			continue
 		}
 
-		// Filter to JOBS_SEARCH variant only; skip JOB_DETAILS prefetch stubs.
-		if !strings.Contains(cardURN, ",JOBS_SEARCH)") {
+		// Skip the JOB_DETAILS prefetch stubs. Do NOT allow-list the search
+		// variant: LinkedIn renamed it from JOBS_SEARCH to SEMANTIC_SEARCH
+		// around 2026-11-20 and an allow-list silently dropped every job. The
+		// title and posting-URN checks below still reject anything unusable.
+		if strings.Contains(cardURN, ",JOB_DETAILS)") {
 			continue
 		}
 
