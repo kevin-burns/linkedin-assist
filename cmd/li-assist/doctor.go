@@ -202,6 +202,18 @@ Use --check-login-flow to also verify the LinkedIn login page renders
 						detail:  detail,
 					})
 					anyFail = true
+				} else if len(jobs) == 0 {
+					// A worldwide search for "engineer" is never legitimately empty.
+					// Zero means the parser no longer recognises the response:
+					// exactly how a renamed card variant (JOBS_SEARCH ->
+					// SEMANTIC_SEARCH, 2026-11-20) went unnoticed for days while
+					// this check said PASS.
+					results = append(results, checkResult{
+						name:    "voyager probe",
+						verdict: "FAIL",
+						detail:  "search for \"engineer\" returned 0 results -- response schema drift likely (LinkedIn API may have changed)",
+					})
+					anyFail = true
 				} else {
 					results = append(results, checkResult{
 						name:    "voyager probe",
