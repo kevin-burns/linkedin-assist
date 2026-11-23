@@ -122,6 +122,21 @@ class TestLoadCache(ReportTempDir):
         with self.assertRaises(li_digest.ConfigError):
             li_report.load_cache(self.cache_path)
 
+    def test_unicode_line_separators_inside_a_value_do_not_split_records(self):
+        # li-assist v0.4.0+ (encoding/json/v2) writes U+2028/U+2029 raw, as
+        # JSON allows. str.splitlines() treats them as line breaks, which cut
+        # one cached LinkedIn description in half and failed the 2026-11-23
+        # 17:30 sweep ("cache line 1366 is not valid JSON"). JSONL records are
+        # separated by "\n" only.
+        self.cache_path.write_text(
+            '{"urn": "urn:li:fsd_jobPosting:1", "title": "A", "description": "one\u2028two\u2029three"}\n'
+            '{"urn": "urn:li:fsd_jobPosting:2", "title": "B"}\n',
+            encoding="utf-8",
+        )
+        rows = li_report.load_cache(self.cache_path)
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["description"], "one\u2028two\u2029three")
+
     def test_non_object_line_raises_config_error(self):
         self.cache_path.write_text("[1, 2, 3]\n", encoding="utf-8")
         with self.assertRaises(li_digest.ConfigError):

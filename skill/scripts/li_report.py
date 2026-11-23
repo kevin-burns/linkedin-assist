@@ -96,7 +96,9 @@ def load_cache(path) -> list:
         raise li_digest.ConfigError(f"cache not readable: {path}") from None
 
     rows = []
-    for lineno, line in enumerate(text.splitlines(), start=1):
+    # Split on "\n" only. str.splitlines() also breaks on U+2028/U+2029,
+    # which JSON allows raw inside strings and li-assist v0.4.0+ writes raw.
+    for lineno, line in enumerate(text.split("\n"), start=1):
         line = line.strip()
         if not line:
             continue

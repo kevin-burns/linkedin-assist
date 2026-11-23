@@ -273,7 +273,7 @@ func (s *Store) PutInsights(id string, ins domain.Insights) {
 	if !ok {
 		return
 	}
-	b, err := json.Marshal(ins)
+	b, err := json.Marshal(ins, jsontext.EscapeForJS(true)) // see buildPayload
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "WARNING: cache: cannot marshal insights for %s: %v\n", id, err)
 		return
@@ -342,7 +342,9 @@ func (s *Store) buildPayload() ([]byte, int) {
 	for {
 		buf.Reset()
 		for _, r := range recs {
-			line, err := json.Marshal(r)
+			// EscapeForJS: escape U+2028/U+2029 as v1 did. The file is JSONL
+			// read by Python, whose str.splitlines() breaks on them.
+			line, err := json.Marshal(r, jsontext.EscapeForJS(true))
 			if err != nil {
 				// Should never happen with our clean structs.
 				fmt.Fprintf(os.Stderr, "WARNING: cache: skipping unmarshalable record %q: %v\n", r.URN, err)
