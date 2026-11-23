@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        go: ['1.26']
+        go: ['1.27']
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -85,7 +85,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v7
         with:
-          go-version: '1.26'
+          go-version: '1.27'
           # check-latest resolves the newest 1.26.x rather than the toolchain
           # baked into the runner image, which lags. On 2026-08-19 the image
           # still carried go1.26.5 and govulncheck failed the build on four
