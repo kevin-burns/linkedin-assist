@@ -27,7 +27,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: ${{ matrix.go }}
-          # check-latest resolves the newest 1.26.x rather than the toolchain
+          # check-latest resolves the newest 1.27.x rather than the toolchain
           # baked into the runner image, which lags. On 2026-08-19 the image
           # still carried go1.26.5 and govulncheck failed the build on four
           # stdlib advisories (GO-2026-6218, -6090, -5972, -5026), every
@@ -102,7 +102,7 @@ jobs:
         uses: actions/setup-go@v7
         with:
           go-version: '1.27'
-          # check-latest resolves the newest 1.26.x rather than the toolchain
+          # check-latest resolves the newest 1.27.x rather than the toolchain
           # baked into the runner image, which lags. On 2026-08-19 the image
           # still carried go1.26.5 and govulncheck failed the build on four
           # stdlib advisories (GO-2026-6218, -6090, -5972, -5026), every
