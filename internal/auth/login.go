@@ -55,7 +55,7 @@ func Login(parent context.Context) error {
 	fmt.Printf("Chrome profile dir: %s\n", sess.ProfileDir())
 	fmt.Println("Navigating to LinkedIn login page...")
 
-	if err := chromedp.Run(sess.ctx, chromedp.Navigate(linkedInLoginURL)); err != nil {
+	if err := chromedp.Do(sess.ctx, chromedp.Navigate(linkedInLoginURL)); err != nil {
 		return fmt.Errorf("navigate to login page: %w", err)
 	}
 
@@ -119,8 +119,9 @@ func persistAuthCookies(ctx context.Context) error {
 			continue
 		}
 		params := BuildPersistParams(c)
-		if doErr := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-			return params.Do(ctx)
+		if doErr := chromedp.Do(ctx, chromedp.Func(func(ctx context.Context, t *chromedp.Target) error {
+			_, err := cdp.Call(ctx, t, network.SetCookie, *params)
+			return err
 		})); doErr != nil {
 			// Accumulate but continue — failing to persist JSESSIONID should
 			// not prevent li_at from being persisted. Join so that if BOTH fail
@@ -145,28 +146,25 @@ func BuildPersistParams(c *network.Cookie) *network.SetCookieParams {
 	} else {
 		expiryTime = time.Now().UTC().Add(persistExpiry)
 	}
-	ts := cdp.TimeSinceEpoch(expiryTime)
-
-	params := network.SetCookie(c.Name, c.Value).
-		WithDomain(c.Domain).
-		WithPath(c.Path).
-		WithSecure(c.Secure).
-		WithHTTPOnly(c.HTTPOnly).
-		WithExpires(&ts).
-		WithPriority(c.Priority)
-
-	if c.SameSite != "" {
-		params = params.WithSameSite(c.SameSite)
-	}
-	// Forward the source scheme/port so the re-set cookie keeps the same
-	// schemeful-SameSite identity as the original. Without these, a future
-	// Chrome that enforces Schemeful SameSite on CDP-injected cookies could
-	// treat the re-set cookie as a different one and drop it on close.
-	if c.SourceScheme != "" {
-		params = params.WithSourceScheme(c.SourceScheme)
-	}
-	if c.SourcePort != 0 {
-		params = params.WithSourcePort(c.SourcePort)
+	params := &network.SetCookieParams{
+		Name:     c.Name,
+		Value:    c.Value,
+		Domain:   c.Domain,
+		Path:     c.Path,
+		Secure:   new(c.Secure),
+		HTTPOnly: new(c.HTTPOnly),
+		// cdproto's time types are plain seconds since the epoch.
+		Expires:  cdp.TimeSinceEpoch(expiryTime.Unix()),
+		Priority: c.Priority,
+		// Empty values are omitted from the command, as the old With* setters
+		// were only called for non-empty ones.
+		SameSite: c.SameSite,
+		// Forward the source scheme/port so the re-set cookie keeps the same
+		// schemeful-SameSite identity as the original. Without these, a future
+		// Chrome that enforces Schemeful SameSite on CDP-injected cookies could
+		// treat the re-set cookie as a different one and drop it on close.
+		SourceScheme: c.SourceScheme,
+		SourcePort:   c.SourcePort,
 	}
 	return params
 }

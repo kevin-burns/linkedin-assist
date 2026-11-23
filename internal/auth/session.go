@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/storage"
 	"github.com/chromedp/chromedp"
@@ -63,7 +64,7 @@ func (s *Session) EnsureLinkedInOrigin() error {
 	if s.originReady {
 		return nil
 	}
-	if err := chromedp.Run(s.ctx, chromedp.Navigate(linkedInOriginURL)); err != nil {
+	if err := chromedp.Do(s.ctx, chromedp.Navigate(linkedInOriginURL)); err != nil {
 		return fmt.Errorf("navigate to linkedin origin: %w", err)
 	}
 	s.originReady = true
@@ -104,7 +105,7 @@ func Open(parent context.Context, headless bool) (*Session, error) {
 
 	// Trigger actual browser launch with a no-op run so callers get a
 	// launch error immediately rather than on the first real action.
-	if err := chromedp.Run(ctx); err != nil {
+	if err := chromedp.Do(ctx); err != nil {
 		cancelCtx()
 		cancelAlloc()
 		return nil, fmt.Errorf("launch chrome (profile=%s): %w", profileDir, err)
@@ -230,14 +231,11 @@ func (s *Session) LiAtExpiry() (time.Time, bool) {
 
 // getAllCookies retrieves all browser cookies via the Storage CDP domain.
 func getAllCookies(ctx context.Context) ([]*network.Cookie, error) {
-	var cookies []*network.Cookie
-	err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		var err error
-		cookies, err = storage.GetCookies().Do(ctx)
-		return err
-	}))
+	res, err := chromedp.Run(ctx, func(ctx context.Context, t *chromedp.Target) (storage.GetCookiesResult, error) {
+		return cdp.Call(ctx, t, storage.GetCookies, storage.GetCookiesParams{})
+	})
 	if err != nil {
 		return nil, fmt.Errorf("get cookies: %w", err)
 	}
-	return cookies, nil
+	return res.Cookies, nil
 }
