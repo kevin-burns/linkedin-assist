@@ -238,10 +238,10 @@ func TestBuildPersistParams(t *testing.T) {
 			if params.Path != tc.want.path {
 				t.Errorf("Path: got %q, want %q", params.Path, tc.want.path)
 			}
-			if params.Secure != tc.want.secure {
+			if params.Secure == nil || *params.Secure != tc.want.secure {
 				t.Errorf("Secure: got %v, want %v", params.Secure, tc.want.secure)
 			}
-			if params.HTTPOnly != tc.want.httpOnly {
+			if params.HTTPOnly == nil || *params.HTTPOnly != tc.want.httpOnly {
 				t.Errorf("HTTPOnly: got %v, want %v", params.HTTPOnly, tc.want.httpOnly)
 			}
 			if params.SameSite != tc.want.sameSite {
@@ -257,10 +257,11 @@ func TestBuildPersistParams(t *testing.T) {
 				t.Errorf("SourcePort: got %d, want %d", params.SourcePort, tc.want.sourcePort)
 			}
 
-			if params.Expires == nil {
-				t.Fatal("Expires must not be nil (cookie must become persistent)")
+			if params.Expires <= 0 {
+				t.Fatal("Expires must be set (cookie must become persistent)")
 			}
-			got := params.Expires.Time()
+			// cdproto's TimeSinceEpoch is plain seconds since the epoch.
+			got := time.Unix(int64(params.Expires), 0)
 			if !got.After(tc.want.expiresGT) {
 				t.Errorf("Expires %v is not after lower bound %v", got, tc.want.expiresGT)
 			}

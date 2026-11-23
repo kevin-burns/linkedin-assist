@@ -7,7 +7,6 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 
 	"github.com/kevin-burns/linkedin-assist/internal/auth"
@@ -248,11 +247,8 @@ func isHex(b byte) bool {
 // M0 transport) and returns the HTTP status, ok flag, and the full response
 // body string. csrf must already have surrounding quotes stripped.
 func fetchInPage(ctx context.Context, fullURL, csrf string) (status int, ok bool, body string, err error) {
-	var raw []byte
-	opt := func(p *runtime.EvaluateParams) *runtime.EvaluateParams {
-		return p.WithAwaitPromise(true)
-	}
-	if runErr := chromedp.Run(ctx, chromedp.Evaluate(buildFetchExpr(fullURL, csrf), &raw, opt)); runErr != nil {
+	raw, runErr := chromedp.Run(ctx, chromedp.Evaluate[[]byte](buildFetchExpr(fullURL, csrf), chromedp.EvalAwaitPromise))
+	if runErr != nil {
 		return 0, false, "", runErr
 	}
 	var r struct {
