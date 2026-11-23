@@ -2,7 +2,8 @@ package voyager
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"net/url"
 	"strings"
@@ -335,8 +336,8 @@ func buildJobDetailQuery(urn domain.URN) url.Values {
 // jobDetailEnvelope decodes the outer GraphQL response wrapper.
 // Shape: { "data": { "data": { "jobsDashJobPostingDetailSectionsByCardSectionTypes": {...} } }, "included": [...] }
 type jobDetailEnvelope struct {
-	Data     jobDetailData     `json:"data"`
-	Included []json.RawMessage `json:"included"`
+	Data     jobDetailData    `json:"data"`
+	Included []jsontext.Value `json:"included"`
 }
 
 type jobDetailData struct {
@@ -348,7 +349,7 @@ type jobDetailInner struct {
 }
 
 type jobDetailCollection struct {
-	Elements []json.RawMessage `json:"elements"`
+	Elements []jsontext.Value `json:"elements"`
 }
 
 // jobDetailIncludedStub extracts the $type field from each included entry to

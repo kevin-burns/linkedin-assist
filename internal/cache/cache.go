@@ -16,7 +16,8 @@ package cache
 import (
 	"bufio"
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -49,7 +50,7 @@ type CachedJob struct {
 	SurfacedBy  []string  `json:"surfaced_by,omitempty"`
 	// Insights is a nullable opaque JSON blob reserved for a future enrichment
 	// layer. Never populated by this package; preserved across merges.
-	Insights json.RawMessage `json:"insights,omitempty"`
+	Insights jsontext.Value `json:"insights,omitempty"`
 }
 
 // companyRec is the JSON representation of a company inside a CachedJob.
@@ -277,7 +278,7 @@ func (s *Store) PutInsights(id string, ins domain.Insights) {
 		fmt.Fprintf(os.Stderr, "WARNING: cache: cannot marshal insights for %s: %v\n", id, err)
 		return
 	}
-	rec.Insights = json.RawMessage(b)
+	rec.Insights = jsontext.Value(b)
 	s.records[id] = rec
 }
 

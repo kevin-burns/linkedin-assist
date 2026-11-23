@@ -1,7 +1,8 @@
 package auth
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -36,7 +37,7 @@ func Save(c Credentials, path string) error {
 		return fmt.Errorf("mkdir: %w", err)
 	}
 	tmp := path + ".tmp"
-	data, err := json.MarshalIndent(c, "", "  ")
+	data, err := json.Marshal(c, jsontext.WithIndent("  "), json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
