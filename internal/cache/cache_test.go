@@ -1,6 +1,7 @@
 package cache_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -423,5 +424,39 @@ func TestStore_DefaultPath_ContainsOmLi(t *testing.T) {
 	// Basic sanity: must include the config subdir.
 	if filepath.Base(filepath.Dir(p)) != "cache" {
 		t.Errorf("DefaultPath = %q; expected .../cache/jobs.jsonl", p)
+	}
+}
+
+// The cache is JSONL read by Python tools. encoding/json/v2 writes U+2028
+// and U+2029 raw (JSON allows it), and Python's str.splitlines() breaks a
+// line on them: one LinkedIn description containing U+2028 failed the
+// 2026-11-23 17:30 li-report run ("cache line 1366 is not valid JSON").
+// The cache must escape them, as encoding/json v1 did.
+func TestStore_FlushEscapesUnicodeLineSeparators(t *testing.T) {
+	path := tmpPath(t)
+	s, err := cache.Open(path)
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	s.Upsert(makeJobURN(t, "urn:li:fsd_jobPosting:7001", "one\u2028two\u2029three", "Corp"), "keyword", now)
+	if err := s.Flush(); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.ContainsRune(raw, '\u2028') || bytes.ContainsRune(raw, '\u2029') {
+		t.Fatalf("cache file holds a raw U+2028/U+2029: %q", raw)
+	}
+	if !bytes.Contains(raw, []byte(`\u2028`)) || !bytes.Contains(raw, []byte(`\u2029`)) {
+		t.Fatalf("cache file does not hold the escaped separators: %q", raw)
+	}
+	s2, err := cache.Open(path)
+	if err != nil {
+		t.Fatalf("Open after flush: %v", err)
+	}
+	if !s2.Has("urn:li:fsd_jobPosting:7001") {
+		t.Fatal("record not found after reopen")
 	}
 }
